@@ -1,7 +1,20 @@
 const express=require('express')
-const connectDB=require('./config/database')
+const {connectDB}=require('./config/database')
 const app=express();
 const User=require("./models/user");
+const adminAuth=require('./middlewares/auth')
+
+app.use('/admin',adminAuth)
+
+app.get('/user',(req,res)=>{
+    console.log('Hi, this user route!');
+    res.send('Hello, user route 1');
+})
+
+app.get('/admin/getnames',(req,res)=>{
+    console.log('Hi, this admin route!');
+    res.send('Hello, admin');
+})
 
 app.post('/signup',async (req,res)=>{
     const user=new User({
