@@ -29,6 +29,13 @@ app.post('/signup',async (req,res)=>{
     res.send('User added successfully!')
 })
 
+app.use('/',(err,req,res,next)=>{
+    if(err){
+        res.status(500).send('Internal server error');
+    }
+    else next();
+})
+
 
 connectDB()
     .then(()=>{
