@@ -36,7 +36,6 @@ app.use('/',(err,req,res,next)=>{
     else next();
 })
 
-
 connectDB()
     .then(()=>{
     console.log(`Database connected successfully!`);
