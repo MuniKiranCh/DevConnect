@@ -7,6 +7,22 @@ const adminAuth=require('./middlewares/auth')
 app.use('/admin',adminAuth)
 app.use(express.json());
 
+app.post('/signup',async (req,res)=>{
+    /*
+        {
+        firstName:'Muni',
+        lastName:'Kiran',
+        emailId:'munikiranch@gmail.com',
+        password:'kiran@123'
+        }
+    */
+    const user=new User(req.body);
+
+    await user.save();
+
+    res.send('User added successfully!')
+})
+
 app.get('/user',async (req,res)=>{
     const userEmail=req.body.emailId;
 
@@ -43,25 +59,22 @@ app.get('/feed',async (req,res)=>{
     }
 })
 
-app.get('/admin/getnames',(req,res)=>{
-    console.log('Hi, this admin route!');
-    res.send('Hello, admin');
-})
+// app.get('/admin/getnames',(req,res)=>{
+//     console.log('Hi, this admin route!');
+//     res.send('Hello, admin');
+// })
 
-app.post('/signup',async (req,res)=>{
-    /*
-        {
-        firstName:'Muni',
-        lastName:'Kiran',
-        emailId:'munikiranch@gmail.com',
-        password:'kiran@123'
-        }
-    */
-    const user=new User(req.body);
+app.delete('/user',async (req,res)=>{
+    const userId=req.body.userId;
 
-    await user.save();
+    try{
+        const user=await User.findByIdAndDelete({_id: userId});
 
-    res.send('User added successfully!')
+        res.send('User deleted successfully!');
+    }catch(err){
+        res.status(400).send('Something went wrong!')
+    }
+    // console.log('This is delete route!');
 })
 
 app.use('/',(err,req,res,next)=>{
