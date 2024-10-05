@@ -2,17 +2,17 @@
 const express = require('express');
 const { connectDB } = require('./config/database');
 const User = require('./models/user');
-const adminAuth = require('./middlewares/auth');
 const validationSignup = require('./utils/validation');
 const bcrypt = require('bcrypt');
 const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
+const { userAuth } = require('./middlewares/auth');
 
 // Initialize the express application
 const app = express();
 
 // Middleware
-app.use('/admin', adminAuth); // Admin authentication middleware
+// app.use('/admin', adminAuth); // Admin authentication middleware
 app.use(express.json()); // Parse incoming JSON requests
 app.use(cookieParser()); // Cookie parsing middleware
 
@@ -47,11 +47,13 @@ app.post('/login', async (req, res) => {
         if (!user) throw new Error("Invalid credentials!");
 
         // Compare password
-        const isPasswordValid = await bcrypt.compare(password, user.password);
+        const isPasswordValid = await user.validatePassword(password);
+
+
         if (!isPasswordValid) throw new Error("Invalid credentials!");
 
         // Generate JWT token
-        const token = jwt.sign({ _id: user._id }, 'SECRET_KEY');
+        const token = await jwt.sign({ _id: user._id }, 'SECRET_KEY');
 
         // Set token in cookies
         res.cookie("token", token);
@@ -62,18 +64,9 @@ app.post('/login', async (req, res) => {
 });
 
 // Get User Profile Route
-app.get('/profile', async (req, res) => {
+app.get('/profile', userAuth, async (req, res) => {
     try {
-        const { token } = req.cookies;
-
-        // Check if token is present
-        if (!token) throw new Error("Please login first!");
-
-        // Verify JWT
-        const decoded = jwt.verify(token, 'SECRET_KEY');
-        const user = await User.findById(decoded._id);
-
-        if (!user) throw new Error("User not found!");
+        const user = req.user;
 
         res.send(user);
     } catch (err) {
