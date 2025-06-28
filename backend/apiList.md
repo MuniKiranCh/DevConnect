@@ -1,117 +1,326 @@
-# DevConnect APIs - Professional Developer Networking Platform
+# DevConnect Backend API Documentation
 
-## Authentication APIs
-- POST /api/auth/signup - User registration
-- POST /api/auth/login - User authentication
-- POST /api/auth/logout - User logout
+## Base URL
+```
+http://localhost:3000/api
+```
 
-## Profile Management APIs
-- GET /api/profile/view - Get user profile
-- PATCH /api/profile/edit - Update user profile
-- POST /api/profile/password/change - Change password (auth required)
-- POST /api/profile/password/reset/request - Request password reset (no auth)
-- POST /api/profile/password/reset/reset - Reset password with token (no auth)
-- GET /api/profile/feed - Get user discovery feed
-- DELETE /api/profile/delete - Delete user account
+## Authentication Endpoints
 
-## Connection Management APIs
-- POST /api/request/send/interested/:userId - Send connection request
-- POST /api/request/send/declined/:userId - Decline connection request
-- POST /api/request/review/accepted/:requestId - Accept incoming connection request
-- POST /api/request/review/rejected/:requestId - Reject incoming connection request
+### POST /auth/register
+Register a new user
+- **Body:**
+  ```json
+  {
+    "username": "string",
+    "email": "string",
+    "password": "string",
+    "firstName": "string",
+    "lastName": "string",
+    "bio": "string (optional)",
+    "skills": ["string"],
+    "location": "string (optional)",
+    "website": "string (optional)"
+  }
+  ```
+- **Response:** User object with token
 
-## Connection Status APIs
-- GET /api/request/matches - Get all accepted connections
-- GET /api/request/interested-requests - Get pending connection requests
-- GET /api/request/interactions - Get all connection interactions
+### POST /auth/login
+Login user
+- **Body:**
+  ```json
+  {
+    "email": "string",
+    "password": "string"
+  }
+  ```
+- **Response:** User object with token
 
-## Request Status Types
-- **interested** - Pending connection request (waiting for response)
-- **accepted** - Connection established (both users connected)
-- **rejected** - Incoming request was rejected by receiver
-- **declined** - User actively declined to connect with someone
+### GET /auth/profile
+Get current user profile (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Response:** User profile object
 
-## Features Implemented:
-- ✅ JWT Authentication & Authorization
-- ✅ User Profile Management
-- ✅ Professional Connection System
-- ✅ Password Reset Functionality
-- ✅ Request Validation & Error Handling
-- ✅ MongoDB Database Integration
-- ✅ RESTful API Design
-- ✅ Middleware Implementation
-- ✅ Data Validation & Sanitization
+## Profile Endpoints
 
-### **📱 API Usage Examples**
+### GET /profile/user/:userId
+Get user profile by ID (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Params:** userId (MongoDB ObjectId)
+- **Response:** User profile object
 
-#### **Send Connection Request**
-```bash
-POST /api/request/send/interested/64a1b2c3d4e5f6789012345
-Authorization: Bearer <JWT_TOKEN>
+### PATCH /profile/update
+Update current user profile (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Body:**
+  ```json
+  {
+    "firstName": "string (optional)",
+    "lastName": "string (optional)",
+    "bio": "string (optional)",
+    "skills": ["string"] (optional),
+    "location": "string (optional)",
+    "website": "string (optional)",
+    "avatar": "string (optional)"
+  }
+  ```
+- **Response:** Updated user profile
 
-Response:
+### GET /profile/search
+Search users (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Query Parameters:**
+  - `q`: Search query (string)
+  - `skills`: Skills filter (string, comma-separated)
+  - `location`: Location filter (string)
+  - `page`: Page number (number, default: 1)
+  - `limit`: Results per page (number, default: 10)
+- **Response:** Array of user profiles
+
+### GET /profile/suggestions
+Get suggested connections (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Query Parameters:**
+  - `limit`: Number of suggestions (number, default: 10)
+- **Response:** Array of suggested user profiles
+
+## Connection Request Endpoints
+
+### POST /request/send/:receiverId
+Send connection request (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Params:** receiverId (MongoDB ObjectId)
+- **Response:** Request object
+
+### PATCH /request/accept/:requestId
+Accept connection request (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Params:** requestId (MongoDB ObjectId)
+- **Response:** Updated request object
+
+### PATCH /request/reject/:requestId
+Reject connection request (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Params:** requestId (MongoDB ObjectId)
+- **Response:** Updated request object
+
+### GET /request/pending
+Get pending requests (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Response:** Array of pending requests
+
+### GET /request/sent
+Get sent requests (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Response:** Array of sent requests
+
+### GET /request/connections
+Get all connections (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Response:** Array of connected users
+
+## Messaging Endpoints
+
+### POST /messages/send/:receiverId
+Send message to connected user (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Params:** receiverId (MongoDB ObjectId)
+- **Body:**
+  ```json
+  {
+    "content": "string",
+    "type": "text" | "image" | "file" (optional, default: "text")
+  }
+  ```
+- **Response:** Message object
+
+### GET /messages/conversation/:userId
+Get conversation with specific user (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Params:** userId (MongoDB ObjectId)
+- **Query Parameters:**
+  - `page`: Page number (number, default: 1)
+  - `limit`: Messages per page (number, default: 50)
+- **Response:** Array of messages
+
+### GET /messages/conversations
+Get all conversations (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Response:** Array of conversation summaries
+
+### PATCH /messages/read/:userId
+Mark messages as read (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Params:** userId (MongoDB ObjectId)
+- **Response:** Success message
+
+### DELETE /messages/:messageId
+Delete a message (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Params:** messageId (MongoDB ObjectId)
+- **Response:** Success message
+
+## Call Endpoints
+
+### POST /calls/initiate/:receiverId
+Initiate a call (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Params:** receiverId (MongoDB ObjectId)
+- **Body:**
+  ```json
+  {
+    "callType": "video" | "audio" (optional, default: "video")
+  }
+  ```
+- **Response:** Call object
+
+### PATCH /calls/accept/:callId
+Accept a call (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Params:** callId (MongoDB ObjectId)
+- **Response:** Updated call object
+
+### PATCH /calls/decline/:callId
+Decline a call (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Params:** callId (MongoDB ObjectId)
+- **Response:** Updated call object
+
+### PATCH /calls/end/:callId
+End a call (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Params:** callId (MongoDB ObjectId)
+- **Response:** Updated call object
+
+### GET /calls/history
+Get call history (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Query Parameters:**
+  - `page`: Page number (number, default: 1)
+  - `limit`: Calls per page (number, default: 20)
+- **Response:** Array of call records
+
+### GET /calls/:callId
+Get call details (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Params:** callId (MongoDB ObjectId)
+- **Response:** Call object
+
+### POST /calls/:callId/offer
+Store WebRTC offer (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Params:** callId (MongoDB ObjectId)
+- **Body:**
+  ```json
+  {
+    "offer": "string (SDP offer)"
+  }
+  ```
+- **Response:** Success message
+
+### POST /calls/:callId/answer
+Store WebRTC answer (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Params:** callId (MongoDB ObjectId)
+- **Body:**
+  ```json
+  {
+    "answer": "string (SDP answer)"
+  }
+  ```
+- **Response:** Success message
+
+### POST /calls/:callId/ice-candidate
+Store ICE candidate (Protected)
+- **Headers:** Authorization: Bearer <token>
+- **Params:** callId (MongoDB ObjectId)
+- **Body:**
+  ```json
+  {
+    "candidate": "string (ICE candidate)"
+  }
+  ```
+- **Response:** Success message
+
+## Socket.IO Events
+
+### Client to Server Events:
+- `join`: Join with userId
+- `send_message`: Send message to user
+- `typing`: Send typing indicator
+- `initiate_call`: Initiate video/audio call
+- `accept_call`: Accept incoming call
+- `decline_call`: Decline incoming call
+- `end_call`: End active call
+- `webrtc_offer`: Send WebRTC offer
+- `webrtc_answer`: Send WebRTC answer
+- `ice_candidate`: Send ICE candidate
+
+### Server to Client Events:
+- `new_message`: Receive new message
+- `user_typing`: Receive typing indicator
+- `incoming_call`: Receive incoming call
+- `call_accepted`: Call accepted notification
+- `call_declined`: Call declined notification
+- `call_ended`: Call ended notification
+- `webrtc_offer`: Receive WebRTC offer
+- `webrtc_answer`: Receive WebRTC answer
+- `ice_candidate`: Receive ICE candidate
+
+## Error Responses
+
+All endpoints may return the following error responses:
+
+### 400 Bad Request
+```json
 {
-    "message": "Connection request sent successfully",
-    "requestId": "64a1b2c3d4e5f6789012346"
+  "error": "Validation error message"
 }
 ```
 
-#### **View Pending Requests**
-```bash
-GET /api/request/interested-requests
-Authorization: Bearer <JWT_TOKEN>
-
-Response:
+### 401 Unauthorized
+```json
 {
-    "interestedRequests": [
-        {
-            "_id": "64a1b2c3d4e5f6789012346",
-            "sender": {
-                "_id": "64a1b2c3d4e5f6789012345",
-                "name": "John Doe",
-                "profile_pic": "https://..."
-            },
-            "status": "interested",
-            "createdAt": "2024-01-15T10:30:00Z"
-        }
-    ]
+  "error": "Authentication required"
 }
 ```
 
-#### **Accept Connection Request**
-```bash
-POST /api/request/review/accepted/64a1b2c3d4e5f6789012346
-Authorization: Bearer <JWT_TOKEN>
-
-Response:
+### 403 Forbidden
+```json
 {
-    "message": "Request accepted successfully"
+  "error": "Access denied"
 }
 ```
 
-#### **View Connections**
-```bash
-GET /api/request/matches
-Authorization: Bearer <JWT_TOKEN>
-
-Response:
+### 404 Not Found
+```json
 {
-    "matches": [
-        {
-            "_id": "64a1b2c3d4e5f6789012346",
-            "sender": {
-                "_id": "64a1b2c3d4e5f6789012345",
-                "name": "John Doe",
-                "profile_pic": "https://..."
-            },
-            "receiver": {
-                "_id": "64a1b2c3d4e5f6789012347",
-                "name": "Sarah Smith",
-                "profile_pic": "https://..."
-            },
-            "status": "accepted",
-            "createdAt": "2024-01-15T10:30:00Z"
-        }
-    ]
+  "error": "Resource not found"
 }
 ```
+
+### 500 Internal Server Error
+```json
+{
+  "error": "Internal server error"
+}
+```
+
+## Authentication
+
+Most endpoints require authentication using JWT tokens. Include the token in the Authorization header:
+
+```
+Authorization: Bearer <your-jwt-token>
+```
+
+## Environment Variables
+
+Create a `.env` file in the backend directory with:
+
+```
+PORT=3000
+MONGODB_URI=mongodb://localhost:27017/devconnect
+JWT_SECRET=your-secret-key
+JWT_EXPIRE=7d
+``` 

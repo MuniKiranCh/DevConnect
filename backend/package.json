@@ -1,25 +1,41 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "backend",
+  "name": "devconnect-backend",
   "version": "1.0.0",
-  "description": "",
-  "license": "ISC",
+  "description": "Backend for DevConnect - Professional Developer Networking Platform",
+  "license": "MIT",
   "author": "Ch Muni Kiran",
   "type": "commonjs",
-  "main": "index.js",
+  "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js"
   },
   "dependencies": {
-    "bcrypt": "^6.0.0",
+    "bcrypt": "^5.1.0",
     "body-parser": "^2.2.0",
     "cors": "^2.8.5",
-    "dotenv": "^16.6.1",
-    "express": "^5.1.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
     "jsonwebtoken": "^9.0.2",
-    "mongoose": "^8.15.0",
-    "nodemon": "^3.1.10",
-    "validator": "^13.15.15"
-  }
+    "mongoose": "^7.5.0",
+    "node-turn": "^0.0.6",
+    "nodemon": "^3.0.1",
+    "socket.io": "^4.7.2",
+    "uuid": "^9.0.0",
+    "validator": "^13.11.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "networking",
+    "developers",
+    "professional",
+    "connections",
+    "messaging",
+    "meetings",
+    "video-calls",
+    "webrtc"
+  ]
 }

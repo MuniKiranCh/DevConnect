@@ -1,23 +1,58 @@
 const validator = require("validator");
 const mongoose = require('mongoose');
 
+// Validate email format
+const validateEmail = (email) => {
+    return validator.isEmail(email);
+};
+
+// Validate password strength
+const validatePassword = (password) => {
+    return validator.isStrongPassword(password, {
+        minLength: 8,
+        minLowercase: 1,
+        minUppercase: 1,
+        minNumbers: 1,
+        minSymbols: 1
+    });
+};
+
+// Validate MongoDB ObjectId
+const validateObjectId = (req, res, next) => {
+    const paramNames = ['userId', 'receiverId', 'requestId', 'messageId', 'callId'];
+    let invalidId = null;
+    
+    for (const paramName of paramNames) {
+        if (req.params[paramName] && !mongoose.Types.ObjectId.isValid(req.params[paramName])) {
+            invalidId = paramName;
+            break;
+        }
+    }
+    
+    if (invalidId) {
+        return res.status(400).json({ message: `Invalid ${invalidId} format` });
+    }
+    next();
+};
+
+// Validate signup data
 const validateSignUpData = (req) => {
-    const { firstName, emailId, password, age, gender } = req.body;
+    const { firstName, email, password, age, gender } = req.body;
 
     // Required fields validation
     if (!firstName) {
         throw new Error("First name is required");
     }
-    if (!emailId) {
+    if (!email) {
         throw new Error("Email is required");
     }
-    if (!validator.isEmail(emailId)) {
+    if (!validateEmail(email)) {
         throw new Error("Invalid email");
     }
     if (!password) {
         throw new Error("Password is required");
     }
-    if (!validator.isStrongPassword(password)) {
+    if (!validatePassword(password)) {
         throw new Error("Password is not strong enough");
     }
     
@@ -34,8 +69,9 @@ const validateSignUpData = (req) => {
     }
 };
 
+// Validate profile update data
 const validateProfileUpdate = (req) => {
-    const ALLOWED_UPDATES = ['firstName', 'lastName', 'photoUrl', 'about', 'skills', 'age', 'gender'];
+    const ALLOWED_UPDATES = ['firstName', 'lastName', 'bio', 'skills', 'location', 'website', 'avatar'];
     const isValidUpdate = Object.keys(req.body).every(field => ALLOWED_UPDATES.includes(field));
     if (!isValidUpdate) {
         return false;
@@ -46,28 +82,50 @@ const validateProfileUpdate = (req) => {
         return false;
     }
     
-    // Validate age if provided
-    if (req.body?.age && (req.body.age < 15 || req.body.age > 100)) {
-        return false;
-    }
-    
-    // Validate gender if provided
-    if (req.body?.gender && !['male', 'female', 'others'].includes(req.body.gender)) {
+    // Validate website URL if provided
+    if (req.body?.website && !validator.isURL(req.body.website)) {
         return false;
     }
     
     return true;
 };
 
-// Validate MongoDB ObjectId
-const validateObjectId = (req, res, next) => {
-    const { toUserId, requestId } = req.params;
-    const idToValidate = toUserId || requestId;
+// Validate message data
+const validateMessageData = (req) => {
+    const { content, type } = req.body;
     
-    if (!mongoose.Types.ObjectId.isValid(idToValidate)) {
-        return res.status(400).json({ message: 'Invalid ID format' });
+    if (!content || content.trim().length === 0) {
+        throw new Error("Message content is required");
     }
-    next();
+    
+    if (content.length > 1000) {
+        throw new Error("Message content too long (max 1000 characters)");
+    }
+    
+    if (type && !['text', 'image', 'file'].includes(type)) {
+        throw new Error("Invalid message type");
+    }
+    
+    return true;
 };
 
-module.exports = { validateSignUpData, validateProfileUpdate, validateObjectId };
+// Validate call data
+const validateCallData = (req) => {
+    const { callType } = req.body;
+    
+    if (callType && !['video', 'audio'].includes(callType)) {
+        throw new Error("Invalid call type");
+    }
+    
+    return true;
+};
+
+module.exports = { 
+    validateEmail, 
+    validatePassword, 
+    validateObjectId, 
+    validateSignUpData, 
+    validateProfileUpdate,
+    validateMessageData,
+    validateCallData
+};

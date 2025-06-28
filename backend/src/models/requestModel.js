@@ -13,7 +13,7 @@ const requestSchema=new mongoose.Schema({
     },
     status:{
         type:String,
-        enum:['interested','accepted','rejected','declined'],
+        enum:['interested','accepted','rejected'],
         default:'interested'
     }
 },{
