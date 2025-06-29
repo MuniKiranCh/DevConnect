@@ -149,7 +149,7 @@ const getPendingRequests = async (req, res) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit))
-        .populate('sender', 'firstName lastName photoUrl bio skills');
+        .populate('sender', 'firstName lastName photoUrl bio skills username');
 
         const total = await Request.countDocuments({
             receiver: req.user._id,
@@ -213,7 +213,7 @@ const getConnections = async (req, res) => {
         const user = await User.findById(req.user._id)
             .populate({
                 path: 'connections',
-                select: 'firstName lastName photoUrl bio skills location',
+                select: 'firstName lastName photoUrl bio skills location username',
                 options: {
                     skip: skip,
                     limit: parseInt(limit),

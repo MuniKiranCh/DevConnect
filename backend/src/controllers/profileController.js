@@ -1,5 +1,4 @@
 const User = require('../models/userModel');
-const { validateEmail } = require('../utils/validation');
 
 // Get user profile by ID
 const getUserProfile = async (req, res) => {
@@ -7,8 +6,7 @@ const getUserProfile = async (req, res) => {
         const { userId } = req.params;
 
         const user = await User.findById(userId)
-            .select('-password -email')
-            .populate('skills');
+            .select('-password -email');
 
         if (!user) {
             return res.status(404).json({ message: 'User not found' });
@@ -28,16 +26,14 @@ const updateProfile = async (req, res) => {
     try {
         const { firstName, lastName, bio, skills, location, website, github, linkedin, photoUrl } = req.body;
 
-        // Validation
-        if (email && !validateEmail(email)) {
-            return res.status(400).json({ message: 'Invalid email format' });
-        }
-
         const updateData = {};
         if (firstName) updateData.firstName = firstName;
         if (lastName) updateData.lastName = lastName;
         if (bio !== undefined) updateData.bio = bio;
-        if (skills) updateData.skills = skills;
+        if (skills) {
+            // Handle skills as comma-separated string or array
+            updateData.skills = Array.isArray(skills) ? skills : skills.split(',').map(skill => skill.trim());
+        }
         if (location) updateData.location = location;
         if (website) updateData.website = website;
         if (github) updateData.github = github;
@@ -94,7 +90,6 @@ const searchUsers = async (req, res) => {
 
         const users = await User.find(query)
             .select('-password -email')
-            .populate('skills')
             .sort({ firstName: 1, lastName: 1 })
             .skip(skip)
             .limit(parseInt(limit));
@@ -137,7 +132,6 @@ const getSuggestedConnections = async (req, res) => {
             _id: { $nin: connectedUserIds }
         })
         .select('-password -email')
-        .populate('skills')
         .sort({ firstName: 1, lastName: 1 })
         .skip(skip)
         .limit(parseInt(limit));

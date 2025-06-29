@@ -6,7 +6,7 @@ const { validateEmail, validatePassword } = require('../utils/validation');
 // Register a new user
 const register = async (req, res) => {
     try {
-        const { firstName, lastName, email, password, bio, skills, location, website, github, linkedin } = req.body;
+        const { firstName, lastName, username, email, password, bio, skills, location, website, github, linkedin, photoUrl } = req.body;
 
         // Validation
         if (!firstName || !lastName || !email || !password) {
@@ -29,23 +29,38 @@ const register = async (req, res) => {
             return res.status(409).json({ message: 'User with this email already exists' });
         }
 
+        // Check if username already exists
+        const existingUsername = await User.findOne({ username });
+        if (existingUsername) {
+            return res.status(409).json({ message: 'Username already taken' });
+        }
+
         // Hash password
         const saltRounds = 12;
         const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-        // Create user
-        const user = await User.create({
+        // Create user object
+        const userData = {
             firstName,
             lastName,
             email,
             password: hashedPassword,
-            bio,
-            skills,
-            location,
-            website,
-            github,
-            linkedin
-        });
+            username,
+            bio: bio || '',
+            skills: skills ? skills.split(',').map(skill => skill.trim()) : [],
+            location: location || '',
+            website: website || '',
+            github: github || '',
+            linkedin: linkedin || '',
+        };
+
+        // Add photoUrl if provided
+        if (photoUrl) {
+            userData.photoUrl = photoUrl;
+        }
+
+        // Create user
+        const user = await User.create(userData);
 
         // Generate JWT token
         const token = jwt.sign(
@@ -65,6 +80,17 @@ const register = async (req, res) => {
         });
     } catch (error) {
         console.error('Register error:', error);
+        
+        // Handle duplicate key errors more specifically
+        if (error.code === 11000) {
+            const field = Object.keys(error.keyPattern)[0];
+            if (field === 'email') {
+                return res.status(409).json({ message: 'User with this email already exists' });
+            } else if (field === 'username') {
+                return res.status(409).json({ message: 'Username already taken' });
+            }
+        }
+        
         return res.status(500).json({ message: 'Internal server error' });
     }
 };

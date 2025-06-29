@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const connectDB = require('./config/database');
+const cors = require('cors');
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
@@ -13,6 +14,9 @@ const io = socketIo(server, {
 
 require('dotenv').config();
 app.use(express.json());
+app.use(cors({
+  origin: 'http://localhost:5173'
+}));
 
 const port = process.env.PORT || 3000;
 
@@ -33,13 +37,13 @@ const connectedUsers = new Map(); // userId -> socketId
 const activeCalls = new Map(); // callId -> {caller, receiver}
 
 io.on('connection', (socket) => {
-    console.log('User connected:', socket.id);
+    // console.log('User connected:', socket.id);
 
     // User joins with their userId
     socket.on('join', (userId) => {
         connectedUsers.set(userId, socket.id);
         socket.userId = userId;
-        console.log(`User ${userId} joined with socket ${socket.id}`);
+        // console.log(`User ${userId} joined with socket ${socket.id}`);
     });
 
     // Handle new message
@@ -171,7 +175,7 @@ io.on('connection', (socket) => {
             connectedUsers.delete(socket.userId);
             console.log(`User ${socket.userId} disconnected`);
         }
-        console.log('User disconnected:', socket.id);
+        // console.log('User disconnected:', socket.id);
     });
 });
 

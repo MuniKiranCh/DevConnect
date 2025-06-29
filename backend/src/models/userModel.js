@@ -15,7 +15,16 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
-    emailId: {
+    username: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      minlength: 3,
+      maxlength: 30,
+      match: /^[a-zA-Z0-9_]+$/,
+    },
+    email: {
       type: String,
       required: true,
       unique: true,
@@ -66,9 +75,42 @@ const userSchema = new mongoose.Schema(
         }
       },
     },
-    about: {
+    bio: {
       type: String,
-      default: "This is a default about of the user!",
+      default: "",
+      maxlength: 500,
+    },
+    location: {
+      type: String,
+      default: "",
+      maxlength: 100,
+    },
+    website: {
+      type: String,
+      default: "",
+      validate(value) {
+        if (value && !validator.isURL(value)) {
+          throw new Error("Invalid website URL");
+        }
+      },
+    },
+    github: {
+      type: String,
+      default: "",
+      validate(value) {
+        if (value && !validator.isURL(value)) {
+          throw new Error("Invalid GitHub URL");
+        }
+      },
+    },
+    linkedin: {
+      type: String,
+      default: "",
+      validate(value) {
+        if (value && !validator.isURL(value)) {
+          throw new Error("Invalid LinkedIn URL");
+        }
+      },
     },
     skills: {
       type: [String],
@@ -81,6 +123,10 @@ const userSchema = new mongoose.Schema(
     resetPasswordExpires: {
       type: Date,
     },
+    connections: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    }],
   },
   {
     timestamps: true,

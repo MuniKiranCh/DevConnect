@@ -10,13 +10,13 @@ const userAuth = async (req, res, next) => {
         }
         const token = authHeader.split(' ')[1];
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const user = await User.findById(decoded._id);
+        const user = await User.findById(decoded.userId);
         if (!user) {
             return res.status(401).send('User not found');
         }
         
         // Check if password version matches (invalidates tokens after password change)
-        if (decoded.passwordVersion !== user.passwordVersion) {
+        if (decoded.passwordVersion !== undefined && decoded.passwordVersion !== user.passwordVersion) {
             return res.status(401).send('Token invalidated due to password change. Please login again.');
         }
         
