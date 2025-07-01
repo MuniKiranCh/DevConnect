@@ -32,7 +32,21 @@ const initiateCall = async (req, res) => {
             return res.status(403).json({ message: 'Can only call connected users' });
         }
 
-        // Check if receiver is already in a call
+        // Clean up stale calls for the receiver (e.g., calls older than 2 minutes)
+        const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+        await Call.updateMany({
+            $or: [
+                { caller: receiverId },
+                { receiver: receiverId }
+            ],
+            status: { $in: ['ringing', 'accepted'] },
+            createdAt: { $lt: twoMinutesAgo }
+        }, {
+            status: 'ended',
+            endTime: new Date()
+        });
+
+        // Check if receiver is already in a call (after cleanup)
         const existingCall = await Call.findOne({
             $or: [
                 { caller: receiverId },

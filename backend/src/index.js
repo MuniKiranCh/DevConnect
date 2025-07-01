@@ -8,14 +8,16 @@ const server = http.createServer(app);
 const io = socketIo(server, {
     cors: {
         origin: "*", // In production, set to your frontend URL
-        methods: ["GET", "POST"]
+        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
     }
 });
+
+app.options('*', cors()); 
 
 require('dotenv').config();
 app.use(express.json());
 app.use(cors({
-  origin: 'http://localhost:5173'
+  origin: true
 }));
 
 const port = process.env.PORT || 3000;
@@ -37,26 +39,25 @@ const connectedUsers = new Map(); // userId -> socketId
 const activeCalls = new Map(); // callId -> {caller, receiver}
 
 io.on('connection', (socket) => {
-    // console.log('User connected:', socket.id);
+    console.log(`[SOCKET] User connected: ${socket.id}`);
 
     // User joins with their userId
     socket.on('join', (userId) => {
         connectedUsers.set(userId, socket.id);
         socket.userId = userId;
-        // console.log(`User ${userId} joined with socket ${socket.id}`);
+        console.log(`[SOCKET] User ${userId} joined with socket ${socket.id}`);
     });
 
     // Handle new message
     socket.on('send_message', (data) => {
         const { receiverId, message } = data;
         const receiverSocketId = connectedUsers.get(receiverId);
-        
         if (receiverSocketId) {
             io.to(receiverSocketId).emit('new_message', {
                 senderId: socket.userId,
                 message: message
             });
-            console.log(`Message sent from ${socket.userId} to ${receiverId}`);
+            console.log(`[SOCKET] Message sent from ${socket.userId} to ${receiverId}`);
         }
     });
 
@@ -64,7 +65,6 @@ io.on('connection', (socket) => {
     socket.on('typing', (data) => {
         const { receiverId, isTyping } = data;
         const receiverSocketId = connectedUsers.get(receiverId);
-        
         if (receiverSocketId) {
             io.to(receiverSocketId).emit('user_typing', {
                 senderId: socket.userId,
@@ -73,99 +73,160 @@ io.on('connection', (socket) => {
         }
     });
 
-    // WebRTC Video Call Signaling
+    // WebRTC Group Call Signaling
     socket.on('initiate_call', (data) => {
-        const { receiverId, callType } = data;
-        const receiverSocketId = connectedUsers.get(receiverId);
-        
-        if (receiverSocketId) {
-            io.to(receiverSocketId).emit('incoming_call', {
-                callerId: socket.userId,
-                callType: callType || 'video'
+        const { participantIds, callType } = data; // participantIds: array of userIds
+        console.log(`[SOCKET] Call initiated by ${socket.userId} to participants:`, participantIds);
+        let allParticipantsOnline = true;
+        const offlineParticipants = [];
+        if (Array.isArray(participantIds)) {
+            participantIds.forEach(pid => {
+                if (pid !== socket.userId) {
+                    const receiverSocketId = connectedUsers.get(pid);
+                    if (receiverSocketId) {
+                        io.to(receiverSocketId).emit('incoming_call', {
+                            callerId: socket.userId,
+                            callType: callType || 'video',
+                            participantIds
+                        });
+                        console.log(`[SOCKET] Incoming call sent to ${pid}`);
+                    } else {
+                        console.log(`[SOCKET] User ${pid} not connected`);
+                        offlineParticipants.push(pid);
+                        allParticipantsOnline = false;
+                    }
+                }
             });
-            console.log(`Call initiated from ${socket.userId} to ${receiverId}`);
+            if (!allParticipantsOnline) {
+                io.to(socket.id).emit('call_participants_offline', {
+                    offlineParticipants,
+                    message: 'Some participants are not online'
+                });
+            }
         }
     });
 
     socket.on('accept_call', (data) => {
-        const { callerId, callId } = data;
-        const callerSocketId = connectedUsers.get(callerId);
-        
-        if (callerSocketId) {
-            io.to(callerSocketId).emit('call_accepted', {
-                receiverId: socket.userId,
-                callId: callId
+        const { participantIds, callId } = data;
+        console.log(`[SOCKET] Call accepted by ${socket.userId}`);
+        if (Array.isArray(participantIds)) {
+            participantIds.forEach(pid => {
+                if (pid !== socket.userId) {
+                    const receiverSocketId = connectedUsers.get(pid);
+                    if (receiverSocketId) {
+                        io.to(receiverSocketId).emit('call_accepted', {
+                            receiverId: socket.userId,
+                            callId: callId,
+                            participantIds
+                        });
+                        console.log(`[SOCKET] Call accepted event sent to ${pid}`);
+                    }
+                }
             });
-            console.log(`Call accepted by ${socket.userId} from ${callerId}`);
         }
     });
 
     socket.on('decline_call', (data) => {
-        const { callerId, callId } = data;
-        const callerSocketId = connectedUsers.get(callerId);
-        
-        if (callerSocketId) {
-            io.to(callerSocketId).emit('call_declined', {
-                receiverId: socket.userId,
-                callId: callId
+        const { participantIds, callId } = data;
+        console.log(`[SOCKET] Call declined by ${socket.userId}`);
+        if (Array.isArray(participantIds)) {
+            participantIds.forEach(pid => {
+                if (pid !== socket.userId) {
+                    const receiverSocketId = connectedUsers.get(pid);
+                    if (receiverSocketId) {
+                        io.to(receiverSocketId).emit('call_declined', {
+                            receiverId: socket.userId,
+                            callId: callId,
+                            participantIds
+                        });
+                        console.log(`[SOCKET] Call declined event sent to ${pid}`);
+                    }
+                }
             });
-            console.log(`Call declined by ${socket.userId} from ${callerId}`);
         }
     });
 
     socket.on('end_call', (data) => {
-        const { receiverId, callId } = data;
-        const receiverSocketId = connectedUsers.get(receiverId);
-        
-        if (receiverSocketId) {
-            io.to(receiverSocketId).emit('call_ended', {
-                callerId: socket.userId,
-                callId: callId
+        const { participantIds, callId } = data;
+        console.log(`[SOCKET] Call ended by ${socket.userId}`);
+        if (Array.isArray(participantIds)) {
+            participantIds.forEach(pid => {
+                if (pid !== socket.userId) {
+                    const receiverSocketId = connectedUsers.get(pid);
+                    if (receiverSocketId) {
+                        io.to(receiverSocketId).emit('call_ended', {
+                            callerId: socket.userId,
+                            callId: callId,
+                            participantIds
+                        });
+                        console.log(`[SOCKET] Call ended event sent to ${pid}`);
+                    }
+                }
             });
-            console.log(`Call ended by ${socket.userId} with ${receiverId}`);
         }
     });
 
-    // WebRTC Signaling
+    // WebRTC Signaling for group
     socket.on('webrtc_offer', (data) => {
-        const { receiverId, offer, callId } = data;
-        const receiverSocketId = connectedUsers.get(receiverId);
-        
-        if (receiverSocketId) {
-            io.to(receiverSocketId).emit('webrtc_offer', {
-                callerId: socket.userId,
-                offer: offer,
-                callId: callId
+        const { participantIds, offer, callId } = data;
+        console.log(`[SOCKET] WebRTC offer from ${socket.userId} to participants:`, participantIds);
+        if (Array.isArray(participantIds)) {
+            participantIds.forEach(pid => {
+                if (pid !== socket.userId) {
+                    const receiverSocketId = connectedUsers.get(pid);
+                    if (receiverSocketId) {
+                        io.to(receiverSocketId).emit('webrtc_offer', {
+                            callerId: socket.userId,
+                            offer: offer,
+                            callId: callId,
+                            participantIds
+                        });
+                        console.log(`[SOCKET] WebRTC offer sent to ${pid}`);
+                    }
+                }
             });
-            console.log(`WebRTC offer sent from ${socket.userId} to ${receiverId}`);
         }
     });
 
     socket.on('webrtc_answer', (data) => {
-        const { callerId, answer, callId } = data;
-        const callerSocketId = connectedUsers.get(callerId);
-        
-        if (callerSocketId) {
-            io.to(callerSocketId).emit('webrtc_answer', {
-                receiverId: socket.userId,
-                answer: answer,
-                callId: callId
+        const { participantIds, answer, callId } = data;
+        console.log(`[SOCKET] WebRTC answer from ${socket.userId} to participants:`, participantIds);
+        if (Array.isArray(participantIds)) {
+            participantIds.forEach(pid => {
+                if (pid !== socket.userId) {
+                    const receiverSocketId = connectedUsers.get(pid);
+                    if (receiverSocketId) {
+                        io.to(receiverSocketId).emit('webrtc_answer', {
+                            receiverId: socket.userId,
+                            answer: answer,
+                            callId: callId,
+                            participantIds
+                        });
+                        console.log(`[SOCKET] WebRTC answer sent to ${pid}`);
+                    }
+                }
             });
-            console.log(`WebRTC answer sent from ${socket.userId} to ${callerId}`);
         }
     });
 
     socket.on('ice_candidate', (data) => {
-        const { receiverId, candidate, callId } = data;
-        const receiverSocketId = connectedUsers.get(receiverId);
-        
-        if (receiverSocketId) {
-            io.to(receiverSocketId).emit('ice_candidate', {
-                senderId: socket.userId,
-                candidate: candidate,
-                callId: callId
+        const { participantIds, candidate, callId } = data;
+        console.log(`[SOCKET] ICE candidate from ${socket.userId} to participants:`, participantIds, candidate);
+        if (Array.isArray(participantIds)) {
+            participantIds.forEach(pid => {
+                if (pid !== socket.userId) {
+                    const receiverSocketId = connectedUsers.get(pid);
+                    if (receiverSocketId) {
+                        io.to(receiverSocketId).emit('ice_candidate', {
+                            senderId: socket.userId,
+                            candidate: candidate,
+                            callId: callId,
+                            participantIds
+                        });
+                        console.log(`[SOCKET] ICE candidate sent to ${pid}`);
+                    }
+                }
             });
-            console.log(`ICE candidate sent from ${socket.userId} to ${receiverId}`);
         }
     });
 
@@ -173,9 +234,8 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         if (socket.userId) {
             connectedUsers.delete(socket.userId);
-            console.log(`User ${socket.userId} disconnected`);
+            console.log(`[SOCKET] User ${socket.userId} disconnected (socket ${socket.id})`);
         }
-        // console.log('User disconnected:', socket.id);
     });
 });
 
@@ -187,7 +247,7 @@ const startServer = async () => {
     try {
         await connectDB();
         console.log('Database connected successfully');
-        server.listen(port, () => {
+        server.listen(port, '0.0.0.0', () => {
             console.log(`Server is running on PORT ${port}`);
             console.log(`Socket.io server is ready for real-time messaging and video calls`);
         });

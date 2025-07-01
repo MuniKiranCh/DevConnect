@@ -229,12 +229,12 @@ const Dashboard = () => {
           icon={Phone}
           color="purple"
         />
-        <StatCard
+        {/* <StatCard
           title="Growth Rate"
           value={`${stats.growthRate}%`}
           icon={TrendingUp}
           color="orange"
-        />
+        /> */}
       </div>
 
       {/* Main Content Grid */}
@@ -275,9 +275,9 @@ const Dashboard = () => {
                 <div>
                   <h4 className="text-sm font-medium text-gray-900 mb-2">Skills</h4>
                   <div className="flex flex-wrap gap-2">
-                    {user.skills.slice(0, 5).map((skill, index) => (
+                    {user.skills.slice(0, 5).map((skill) => (
                       <span
-                        key={index}
+                        key={skill}
                         className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-full"
                       >
                         {skill}
