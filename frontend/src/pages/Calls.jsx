@@ -59,6 +59,9 @@ const Calls = () => {
   // Filter connections to only show accepted ones
   const acceptedConnections = connections.filter(conn => conn.status === 'accepted' || !conn.status);
 
+  // New state
+  const [activeCallUserId, setActiveCallUserId] = useState(null);
+
   // Ringtone functions
   const playRingtone = () => {
     const audio = ringtoneRef.current;
@@ -155,12 +158,10 @@ const Calls = () => {
       console.log('Call declined:', data);
       setIsRinging(false);
       setIncomingCall(null);
+      setInCall(false);
       setCallStatus('declined');
-      
-      // Stop ringtone
       stopRingtone();
-      
-      toast('Call declined');
+      toast('Call was declined');
       endCallCleanup();
     });
 
@@ -171,17 +172,17 @@ const Calls = () => {
       setIncomingCall(null);
       setInCall(false);
       setCallStatus('ended');
-      
-      // Stop ringtone
       stopRingtone();
-      
-      toast('Call ended');
       endCallCleanup();
     });
 
     // Participant offline handler
     socket.on('call_participant_offline', (data) => {
       console.log('Call participant offline:', data);
+      setIsRinging(false);
+      setIncomingCall(null);
+      setInCall(false);
+      setCallStatus('ended');
       toast.error('User is not online');
       endCallCleanup();
     });
@@ -379,6 +380,7 @@ const Calls = () => {
 
   // Initiate call
   const initiateCall = async (receiverId, type = 'video') => {
+    setActiveCallUserId(receiverId);
     console.log('=== INITIATING CALL ===');
     console.log('Receiver ID:', receiverId);
     console.log('Call type:', type);
@@ -488,7 +490,8 @@ const Calls = () => {
   // Accept incoming call
   const acceptIncomingCall = async () => {
     if (!incomingCall) return;
-
+    setActiveCallUserId(incomingCall.callerId);
+    
     setIsRinging(false);
     
     // Stop ringtone
@@ -586,48 +589,32 @@ const Calls = () => {
   const endCall = () => {
     if (incomingCall) {
       socketService.declineCall(incomingCall.callerId, incomingCall.callType);
-    } else if (remoteStreamRef.current) {
-      // Find the other participant from the remote stream
-      const otherParticipant = acceptedConnections.find(c => 
-        c._id !== user._id && remoteStreamRef.current
-      );
-      if (otherParticipant) {
-        socketService.endCall(otherParticipant._id, callType);
-      }
+    } else if (activeCallUserId) {
+      socketService.endCall(activeCallUserId, callType);
     }
-
     setIncomingCall(null);
     setInCall(false);
     setCallStatus('ended');
+    setActiveCallUserId(null);
     endCallCleanup();
-    toast('Call ended');
   };
 
   // Cleanup function
   const endCallCleanup = () => {
-    // Stop ringtone if playing
     stopRingtone();
-    
-    // Close peer connection
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
     }
-    
-    // Stop local stream
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => track.stop());
       localStreamRef.current = null;
     }
-    
-    // Clear remote stream
     remoteStreamRef.current = null;
-    
-    // Reset UI state
-    setInCall(false);
     setCallStatus('');
     setIsMuted(false);
     setIsVideoOff(false);
+    setActiveCallUserId(null);
   };
 
   // Toggle mute

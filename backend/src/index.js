@@ -194,14 +194,29 @@ io.on('connection', (socket) => {
     socket.on('end_call', (data) => {
         const { receiverId, callType } = data;
         console.log(`[SOCKET] Call ended by ${socket.userId}`);
-        
-        const receiverSocketId = connectedUsers.get(receiverId);
-        if (receiverSocketId) {
-            io.to(receiverSocketId).emit('call_ended', {
-                callerId: socket.userId,
+
+        // Always emit to both users (the one who ended and the other participant)
+        const senderUserId = socket.userId;
+        const receiverUserId = receiverId;
+
+        const senderSocketId = connectedUsers.get(senderUserId);
+        const receiverSocketId = connectedUsers.get(receiverUserId);
+
+        // Emit to the sender (the one who ended the call)
+        if (senderSocketId) {
+            io.to(senderSocketId).emit('call_ended', {
+                callerId: senderUserId,
                 callType: callType || 'video',
             });
-            console.log(`[SOCKET] Call ended event sent to ${receiverId}`);
+            console.log(`[SOCKET] Call ended event sent to sender ${senderUserId}`);
+        }
+        // Emit to the receiver (the other participant)
+        if (receiverSocketId) {
+            io.to(receiverSocketId).emit('call_ended', {
+                callerId: senderUserId,
+                callType: callType || 'video',
+            });
+            console.log(`[SOCKET] Call ended event sent to receiver ${receiverUserId}`);
         }
     });
 
@@ -282,7 +297,7 @@ const startServer = async () => {
     try {
         await connectDB();
         console.log('Database connected successfully');
-        server.listen(port, '0.0.0.0', () => {
+        server.listen(port, () => {
             console.log(`Server is running on PORT ${port}`);
             console.log(`Socket.io server is ready for real-time messaging and video calls`);
         });
