@@ -8,13 +8,9 @@ import { Dashboard, Profile, Connections, Messages, Calls, Feed } from './pages'
 import './index.css';
 import socketService from './utils/socket';
 
-// More reliable ringtone URLs with fallbacks
+// Simple built-in ringtone that will definitely work
 const RINGTONE_URLS = [
-  'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav',
-  'https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg',
-  'https://www.soundjay.com/phone/sounds/phone-ring-1.wav',
-  'https://www.soundjay.com/phone/sounds/phone-ring-2.wav',
-  // Base64 encoded simple ringtone as fallback
+  // Base64 encoded phone ringtone (will always work)
   'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT'
 ];
 
@@ -56,8 +52,71 @@ function AppContent() {
   const { connections } = useConnectionsStore();
   const [incomingCall, setIncomingCall] = useState(null);
   const [isRinging, setIsRinging] = useState(false);
+  const [currentRingtoneIndex, setCurrentRingtoneIndex] = useState(0);
   const ringtoneRef = useRef(null);
   const navigate = useNavigate();
+
+  // Simple and reliable ringtone function
+  const playRingtone = () => {
+    console.log('Playing ringtone...');
+    
+    // Method 1: Try Web Audio API first (most reliable)
+    try {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      
+      const createRingTone = () => {
+        if (!isRinging) return;
+        
+        const oscillator1 = audioContext.createOscillator();
+        const oscillator2 = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator1.connect(gainNode);
+        oscillator2.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        // Classic phone ring pattern: two tones alternating
+        oscillator1.frequency.setValueAtTime(480, audioContext.currentTime);
+        oscillator2.frequency.setValueAtTime(620, audioContext.currentTime);
+        
+        gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
+        gainNode.gain.setValueAtTime(0, audioContext.currentTime + 0.5);
+        gainNode.gain.setValueAtTime(0.5, audioContext.currentTime + 1);
+        gainNode.gain.setValueAtTime(0, audioContext.currentTime + 1.5);
+        
+        oscillator1.start();
+        oscillator2.start();
+        oscillator1.stop(audioContext.currentTime + 2);
+        oscillator2.stop(audioContext.currentTime + 2);
+        
+        // Repeat every 3 seconds
+        setTimeout(createRingTone, 3000);
+      };
+      
+      createRingTone();
+      console.log('Web Audio API ringtone started successfully');
+      return;
+    } catch (error) {
+      console.error('Web Audio API failed:', error);
+    }
+    
+    // Method 2: Try simple audio element
+    try {
+      if (ringtoneRef.current) {
+        ringtoneRef.current.src = RINGTONE_URLS[0];
+        ringtoneRef.current.muted = false;
+        ringtoneRef.current.volume = 0.8;
+        ringtoneRef.current.loop = true;
+        ringtoneRef.current.play().then(() => {
+          console.log('Audio element ringtone started successfully');
+        }).catch(error => {
+          console.error('Audio element failed:', error);
+        });
+      }
+    } catch (error) {
+      console.error('Audio element setup failed:', error);
+    }
+  };
 
   // Initialize socket connection with authentication
   useEffect(() => {
@@ -101,18 +160,9 @@ function AppContent() {
       setIncomingCall(data);
       setIsRinging(true);
       
-      // Play ringtone with error handling
-      if (ringtoneRef.current) {
-        ringtoneRef.current.muted = false;
-        ringtoneRef.current.volume = 0.7;
-        ringtoneRef.current.currentTime = 0; // Reset to start
-        ringtoneRef.current.play().catch(error => {
-          console.error('Error playing ringtone:', error);
-          // Fallback: try to play without user interaction
-          ringtoneRef.current.muted = false;
-          ringtoneRef.current.play().catch(e => console.error('Fallback ringtone failed:', e));
-        });
-      }
+      // Play ringtone with fallbacks
+      console.log('Incoming call received, attempting to play ringtone...');
+      playRingtone();
       
       // Vibrate on mobile devices (if supported)
       if ('vibrate' in navigator) {
@@ -135,20 +185,14 @@ function AppContent() {
       console.log('Call ended globally');
       setIncomingCall(null);
       setIsRinging(false);
-      if (ringtoneRef.current) {
-        ringtoneRef.current.pause();
-        ringtoneRef.current.currentTime = 0;
-      }
+      stopRingtone();
     });
 
     socket.on('call_accepted', () => {
       console.log('Call accepted globally');
       setIsRinging(false);
       // Stop ringtone when call is accepted
-      if (ringtoneRef.current) {
-        ringtoneRef.current.pause();
-        ringtoneRef.current.currentTime = 0;
-      }
+      stopRingtone();
     });
 
     socket.on('call_declined', () => {
@@ -156,10 +200,7 @@ function AppContent() {
       setIncomingCall(null);
       setIsRinging(false);
       // Stop ringtone when call is declined
-      if (ringtoneRef.current) {
-        ringtoneRef.current.pause();
-        ringtoneRef.current.currentTime = 0;
-      }
+      stopRingtone();
     });
 
     // Handle socket connection events
@@ -192,15 +233,25 @@ function AppContent() {
     };
   }, [user]);
 
+  // Function to stop ringtone
+  const stopRingtone = () => {
+    if (ringtoneRef.current) {
+      try {
+        ringtoneRef.current.pause();
+        ringtoneRef.current.currentTime = 0;
+        ringtoneRef.current.src = '';
+      } catch (error) {
+        console.error('Error stopping ringtone:', error);
+      }
+    }
+  };
+
   // Accept/Decline handlers
   const acceptIncomingCall = () => {
     console.log('Accepting incoming call from global handler...');
     setIsRinging(false);
     // Stop ringtone immediately when accepting
-    if (ringtoneRef.current) {
-      ringtoneRef.current.pause();
-      ringtoneRef.current.currentTime = 0;
-    }
+    stopRingtone();
     if (incomingCall) {
       console.log('Notifying others of call acceptance from global handler...');
       // Use socket service to accept call
@@ -226,10 +277,7 @@ function AppContent() {
     console.log('Declining incoming call from global handler...');
     setIsRinging(false);
     // Stop ringtone immediately when declining
-    if (ringtoneRef.current) {
-      ringtoneRef.current.pause();
-      ringtoneRef.current.currentTime = 0;
-    }
+    stopRingtone();
     if (incomingCall) {
       console.log('Notifying others of call decline from global handler...');
       // Use socket service to decline call
@@ -257,7 +305,12 @@ function AppContent() {
 
   return (
     <div className="App">
-      <audio ref={ringtoneRef} src={RINGTONE_URL} loop />
+      <audio 
+        ref={ringtoneRef} 
+        preload="auto"
+        crossOrigin="anonymous"
+        style={{ display: 'none' }}
+      />
       {/* Incoming call modal (global) */}
       {isRinging && incomingCall && (
         <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-75 z-50">

@@ -4,10 +4,7 @@ import { Card, CardHeader, CardTitle, CardContent, Button, Input, Avatar } from 
 import { useMessagesStore, useAuthStore } from '../utils/store';
 import { messageAPI, connectionAPI } from '../utils/api';
 import toast from 'react-hot-toast';
-import io from 'socket.io-client';
-
-const socket = io('http://localhost:3000'); // Adjust if backend URL changes
-// const socket = io('http://192.168.155.234:3000');
+import socketService from '../utils/socket';
 
 const Messages = () => {
   const { user } = useAuthStore();
@@ -52,9 +49,12 @@ const Messages = () => {
 
   // Real-time: Join socket room and listen for new messages
   useEffect(() => {
-    if (user?._id) {
-      socket.emit('join', user._id);
-    }
+    const socket = socketService.getSocket();
+    if (!socket || !user?._id) return;
+
+    // Join user room
+    socket.emit('join', user._id);
+    
     socket.on('new_message', (data) => {
       // data: { senderId, message }
       // Only add if the message is for the currently selected connection
@@ -66,6 +66,7 @@ const Messages = () => {
         });
       }
     });
+    
     return () => {
       socket.off('new_message');
     };
@@ -83,18 +84,28 @@ const Messages = () => {
 
   const sendMessage = async () => {
     if (!newMessage.trim() || !selectedConnection) return;
+    
+    const socket = socketService.getSocket();
+    if (!socket) {
+      toast.error('Connection not available');
+      return;
+    }
+    
     // Optimistically add message to UI
     addMessage(selectedConnection._id, {
       sender: user._id,
       content: newMessage,
       createdAt: new Date().toISOString(),
     });
+    
     // Emit via socket for real-time delivery
     socket.emit('send_message', {
       receiverId: selectedConnection._id,
       message: newMessage,
     });
+    
     setNewMessage('');
+    
     // Optionally, still save to DB via API (optional, or move to backend on socket event)
     try {
       await messageAPI.sendMessage(selectedConnection._id, {

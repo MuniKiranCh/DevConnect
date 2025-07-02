@@ -42,6 +42,10 @@ class SocketService {
       },
       transports: ['websocket', 'polling'],
       forceNew: true, // Force new connection
+      timeout: 20000, // 20 second timeout
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
     });
 
     this.socket.on('connect', () => {
@@ -64,24 +68,6 @@ class SocketService {
       }
     });
 
-    this.socket.on('joined_room', (data) => {
-      console.log('Successfully joined room:', data);
-      console.log('User is now online and ready for calls');
-    });
-
-    this.socket.on('disconnect', () => {
-      console.log('Disconnected from Socket.IO server');
-      this.isConnected = false;
-      
-      // Try to reconnect after a short delay
-      setTimeout(() => {
-        if (this.currentToken && !this.socket.connected) {
-          console.log('Attempting to reconnect socket...');
-          this.connect(this.currentToken);
-        }
-      }, 1000);
-    });
-
     this.socket.on('connect_error', (error) => {
       console.error('Socket connection error:', error);
       console.error('Error details:', error.message);
@@ -91,6 +77,35 @@ class SocketService {
       if (error.message && error.message.includes('Authentication error')) {
         console.error('Authentication failed, token might be invalid');
       }
+    });
+
+    this.socket.on('reconnect', (attemptNumber) => {
+      console.log(`Socket reconnected after ${attemptNumber} attempts`);
+      this.isConnected = true;
+      
+      // Re-join after reconnection
+      if (this.currentUserId) {
+        console.log('Re-joining after reconnection for user:', this.currentUserId);
+        this.socket.emit('join', this.currentUserId);
+      }
+    });
+
+    this.socket.on('reconnect_error', (error) => {
+      console.error('Socket reconnection error:', error);
+    });
+
+    this.socket.on('reconnect_failed', () => {
+      console.error('Socket reconnection failed after all attempts');
+    });
+
+    this.socket.on('joined_room', (data) => {
+      console.log('Successfully joined room:', data);
+      console.log('User is now online and ready for calls');
+    });
+
+    this.socket.on('disconnect', () => {
+      console.log('Disconnected from Socket.IO server');
+      this.isConnected = false;
     });
 
     return this.socket;
