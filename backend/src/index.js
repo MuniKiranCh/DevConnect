@@ -14,7 +14,7 @@ const io = socketIo(server, {
 });
 
 const allowedOrigins = [
-  'https://dev-connect-olive.vercel.app',
+  'https://dev-connect-theta.vercel.app',
   'http://localhost:5173'
 ];
 app.use(cors({
