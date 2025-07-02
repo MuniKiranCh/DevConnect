@@ -8,29 +8,10 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
     cors: {
-        origin: "*", // In production, set to your frontend URL
+        origin: "https://dev-connect-theta.vercel.app", // In production, set to your frontend URL
         methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
     }
 });
-
-app.use((req, res, next) => {
-    const allowedOrigins = [
-      'https://dev-connect-theta.vercel.app',
-      'https://dev-connect-olive.vercel.app',
-      'http://localhost:5173'
-    ];
-    const origin = req.headers.origin;
-    if (allowedOrigins.includes(origin)) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Access-Control-Allow-Credentials', 'true');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    }
-    if (req.method === 'OPTIONS') {
-      return res.sendStatus(200); // Respond to preflight
-    }
-    next();
-  });
 
 const allowedOrigins = [
   'https://dev-connect-theta.vercel.app',
@@ -57,7 +38,6 @@ app.options('*', cors(corsOptions));
 
 require('dotenv').config();
 app.use(express.json());
-app.options('*', cors());
 
 const port = process.env.PORT || 3000;
 
