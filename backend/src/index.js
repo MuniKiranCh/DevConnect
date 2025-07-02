@@ -32,6 +32,7 @@ app.use(cors({
 
 require('dotenv').config();
 app.use(express.json());
+app.options('*', cors());
 
 const port = process.env.PORT || 3000;
 
