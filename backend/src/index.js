@@ -13,13 +13,12 @@ const io = socketIo(server, {
     }
 });
 
-app.options('*', cors()); 
+app.use(cors({
+  origin: '*'
+}));
 
 require('dotenv').config();
 app.use(express.json());
-app.use(cors({
-  origin: true
-}));
 
 const port = process.env.PORT || 3000;
 
