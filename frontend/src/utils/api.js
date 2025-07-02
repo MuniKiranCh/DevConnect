@@ -76,8 +76,7 @@ export const messageAPI = {
 
 // Call API
 export const callAPI = {
-  initiateCall: (receiverId, callData) => 
-    api.post(`/calls/initiate/${receiverId}`, callData),
+  initiateCall: (receiverId, callType) => api.post(`/calls/initiate/${receiverId}`, { callType }),
   acceptCall: (callId) => api.patch(`/calls/accept/${callId}`),
   declineCall: (callId) => api.patch(`/calls/decline/${callId}`),
   endCall: (callId) => api.patch(`/calls/end/${callId}`),

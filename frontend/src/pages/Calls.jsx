@@ -61,6 +61,10 @@ const Calls = () => {
 
   // New state
   const [activeCallUserId, setActiveCallUserId] = useState(null);
+  const [activeCallId, setActiveCallId] = useState(null);
+  const [callStartTime, setCallStartTime] = useState(null);
+  const [callDuration, setCallDuration] = useState(0);
+  const callTimerRef = useRef(null);
 
   // Ringtone functions
   const playRingtone = () => {
@@ -117,25 +121,22 @@ const Calls = () => {
     socket.on('incoming_call', (data) => {
       console.log('=== INCOMING CALL RECEIVED ===');
       console.log('Call data:', data);
-      const { callerId, callType } = data;
-      
+      const { callerId, callType, callId } = data;
       // Find caller info
       const caller = acceptedConnections.find(c => c._id === callerId);
       if (!caller) {
         console.error('Caller not found in connections');
         return;
       }
-
       setIncomingCall({
         callerId,
         callType,
+        callId,
         callerName: `${caller.firstName} ${caller.lastName}`,
         callerPhoto: caller.photoUrl
       });
       setCallType(callType);
       setIsRinging(true);
-      
-      // Play ringtone
       playRingtone();
     });
 
@@ -307,6 +308,20 @@ const Calls = () => {
     };
   }, []);
 
+  // Listen for real-time call history updates
+  useEffect(() => {
+    const socket = socketService.getSocket();
+    if (!socket) return;
+    const handleCallUpdated = (data) => {
+      console.log('Received call_updated event:', data);
+      fetchCallHistory();
+    };
+    socket.on('call_updated', handleCallUpdated);
+    return () => {
+      socket.off('call_updated', handleCallUpdated);
+    };
+  }, []);
+
   // Debug function to test socket connection
   const testSocketConnection = () => {
     const socket = socketService.getSocket();
@@ -378,110 +393,94 @@ const Calls = () => {
     }
   };
 
+  // Start call timer
+  const startCallTimer = () => {
+    const start = Date.now();
+    setCallStartTime(start);
+    setCallDuration(0);
+    if (callTimerRef.current) clearInterval(callTimerRef.current);
+    callTimerRef.current = setInterval(() => {
+      setCallDuration(Math.floor((Date.now() - start) / 1000));
+    }, 1000);
+  };
+
   // Initiate call
   const initiateCall = async (receiverId, type = 'video') => {
     setActiveCallUserId(receiverId);
     console.log('=== INITIATING CALL ===');
     console.log('Receiver ID:', receiverId);
     console.log('Call type:', type);
-    
     // Check both the state and actual socket connection
     const socket = socketService.getSocket();
-    console.log('Socket status:', {
-      socketConnected: socket?.connected,
-      socketExists: !!socket,
-      socketId: socket?.id
-    });
-    
     if (!socketConnected || !socket || !socket.connected) {
-      console.error('Socket not connected:', { socketConnected, socket: !!socket, connected: socket?.connected });
       toast.error('You are not connected. Please check your internet connection.');
       return;
     }
-    
-    console.log('Socket connection verified, proceeding with call...');
-
     setCallType(type);
     setCallStatus('calling');
     setInCall(true);
-
     try {
-      // Get local media stream
+      // 1. Create call in backend and get callId
+      const response = await callAPI.initiateCall(receiverId, type);
+      const call = response.data.data;
+      const callId = call.callId;
+      setActiveCallId(callId);
+      // 2. Get local media stream
       const localStream = await navigator.mediaDevices.getUserMedia({ 
         video: type === 'video', 
         audio: true 
       });
       localStreamRef.current = localStream;
-      
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = localStream;
       }
-
-      // Create peer connection
+      // 3. Create peer connection
       const peerConnection = new RTCPeerConnection(STUN_SERVER);
       peerConnectionRef.current = peerConnection;
-
-      // Add local stream tracks
       localStream.getTracks().forEach(track => {
         peerConnection.addTrack(track, localStream);
       });
-
-      // Handle remote stream
       peerConnection.ontrack = (event) => {
-        console.log('Received remote stream');
         remoteStreamRef.current = event.streams[0];
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = event.streams[0];
         }
       };
-
-      // Handle ICE candidates
       peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
           socketService.sendIceCandidate(receiverId, event.candidate, type);
         }
       };
-
-      // Handle connection state changes
       peerConnection.onconnectionstatechange = () => {
-        console.log('Connection state:', peerConnection.connectionState);
         if (peerConnection.connectionState === 'connected') {
           setCallStatus('connected');
           toast.success('Call connected!');
+          startCallTimer();
         } else if (peerConnection.connectionState === 'failed') {
           toast.error('Call connection failed');
           endCallCleanup();
         }
       };
-
-      // Initiate call first
-      socketService.initiateCall(receiverId, type);
-
-      // Wait a bit for the call initiation to be processed
+      // 4. Notify receiver via socket (now with callId)
+      socket.emit('initiate_call', { receiverId, callType: type, callId });
+      // 5. Wait a bit for the call initiation to be processed
       setTimeout(async () => {
         try {
-          // Create and send offer
           const offer = await peerConnection.createOffer();
           await peerConnection.setLocalDescription(offer);
-          
-          // Check socket connection again before sending offer
           if (socket && socket.connected) {
             socketService.sendWebRTCOffer(receiverId, offer, type);
           } else {
-            console.error('Socket disconnected while creating offer');
             toast.error('Connection lost while starting call');
             endCallCleanup();
             return;
           }
         } catch (error) {
-          console.error('Error creating offer:', error);
           toast.error('Failed to create call offer');
           endCallCleanup();
         }
       }, 1000);
-
     } catch (error) {
-      console.error('Failed to start call:', error);
       toast.error('Failed to start call: ' + error.message);
       endCallCleanup();
     }
@@ -491,112 +490,112 @@ const Calls = () => {
   const acceptIncomingCall = async () => {
     if (!incomingCall) return;
     setActiveCallUserId(incomingCall.callerId);
-    
+    setActiveCallId(incomingCall.callId);
     setIsRinging(false);
-    
-    // Stop ringtone
     if (ringtoneRef.current) {
       ringtoneRef.current.pause();
       ringtoneRef.current.currentTime = 0;
     }
-
     try {
+      await callAPI.acceptCall(incomingCall.callId);
       // Get local media stream
       const localStream = await navigator.mediaDevices.getUserMedia({ 
         video: incomingCall.callType === 'video', 
         audio: true 
       });
       localStreamRef.current = localStream;
-      
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = localStream;
       }
-
-      // Create peer connection
       const peerConnection = new RTCPeerConnection(STUN_SERVER);
       peerConnectionRef.current = peerConnection;
-
-      // Add local stream tracks
       localStream.getTracks().forEach(track => {
         peerConnection.addTrack(track, localStream);
       });
-
-      // Handle remote stream
       peerConnection.ontrack = (event) => {
-        console.log('Received remote stream');
         remoteStreamRef.current = event.streams[0];
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = event.streams[0];
         }
       };
-
-      // Handle ICE candidates
       peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
           socketService.sendIceCandidate(incomingCall.callerId, event.candidate, incomingCall.callType);
         }
       };
-
-      // Handle connection state changes
       peerConnection.onconnectionstatechange = () => {
-        console.log('Connection state:', peerConnection.connectionState);
         if (peerConnection.connectionState === 'connected') {
           setCallStatus('connected');
           toast.success('Call connected!');
+          startCallTimer();
         } else if (peerConnection.connectionState === 'failed') {
           toast.error('Call connection failed');
           endCallCleanup();
         }
       };
-
-      // Accept the call
-      socketService.acceptCall(incomingCall.callerId, incomingCall.callType);
-      
+      socketService.acceptCall(incomingCall.callerId, incomingCall.callType, incomingCall.callId);
       setIncomingCall(null);
       setInCall(true);
       setCallType(incomingCall.callType);
       setCallStatus('in-call');
-      
       toast.success('Call accepted!');
-
     } catch (error) {
-      console.error('Failed to accept call:', error);
-      toast.error('Failed to accept call: ' + error.message);
+      toast.error('Failed to accept call: ' + (error?.response?.data?.message || error.message));
+      setIncomingCall(null);
+      setIsRinging(false);
+      setInCall(false);
+      setCallStatus('');
       endCallCleanup();
+      fetchCallHistory();
     }
   };
 
   // Decline incoming call
-  const declineIncomingCall = () => {
+  const declineIncomingCall = async () => {
     if (!incomingCall) return;
-
     setIsRinging(false);
-    
-    // Stop ringtone
     if (ringtoneRef.current) {
       ringtoneRef.current.pause();
       ringtoneRef.current.currentTime = 0;
     }
-
-    // Decline the call
-    socketService.declineCall(incomingCall.callerId, incomingCall.callType);
-    
-    setIncomingCall(null);
-    toast('Call declined');
+    try {
+      // Use callId from incomingCall
+      const callId = incomingCall.callId;
+      await callAPI.declineCall(callId);
+      socketService.declineCall(incomingCall.callerId, incomingCall.callType, callId);
+      setIncomingCall(null);
+      toast('Call declined');
+    } catch (error) {
+      toast.error('Failed to decline call: ' + (error?.response?.data?.message || error.message));
+      setIncomingCall(null);
+      setIsRinging(false);
+      setInCall(false);
+      setCallStatus('');
+      endCallCleanup();
+      fetchCallHistory();
+    }
   };
 
   // End call
-  const endCall = () => {
-    if (incomingCall) {
-      socketService.declineCall(incomingCall.callerId, incomingCall.callType);
-    } else if (activeCallUserId) {
-      socketService.endCall(activeCallUserId, callType);
+  const endCall = async () => {
+    try {
+      if (!activeCallId) throw new Error('No active callId');
+      await callAPI.endCall(activeCallId);
+      if (incomingCall) {
+        socketService.declineCall(incomingCall.callerId, incomingCall.callType, activeCallId);
+      } else if (activeCallUserId) {
+        socketService.endCall(activeCallUserId, callType, activeCallId);
+      }
+      setIncomingCall(null);
+      setInCall(false);
+      setCallStatus('ended');
+      setActiveCallUserId(null);
+      setActiveCallId(null);
+      endCallCleanup();
+    } catch (error) {
+      toast.error('Failed to end call: ' + (error?.response?.data?.message || error.message));
+      endCallCleanup();
     }
-    setIncomingCall(null);
-    setInCall(false);
-    setCallStatus('ended');
-    setActiveCallUserId(null);
-    endCallCleanup();
   };
 
   // Cleanup function
@@ -615,6 +614,7 @@ const Calls = () => {
     setIsMuted(false);
     setIsVideoOff(false);
     setActiveCallUserId(null);
+    setActiveCallId(null);
   };
 
   // Toggle mute
@@ -641,9 +641,10 @@ const Calls = () => {
 
   // Format duration
   const formatDuration = (seconds) => {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
-    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+    const hrs = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
   // Format date
@@ -653,20 +654,14 @@ const Calls = () => {
 
   // Filter call history
   const filteredCallHistory = callHistory.filter(call => {
-    const otherParticipant = Array.isArray(call.participants)
-      ? call.participants.find(p => p._id !== user._id)
-      : null;
-    const isAcceptedConnection = acceptedConnections.some(conn => conn._id === otherParticipant?._id);
-    const matchesSearch = `${otherParticipant?.firstName} ${otherParticipant?.lastName}`.toLowerCase().includes(searchQuery.toLowerCase());
-    return isAcceptedConnection && matchesSearch;
+    // Show all calls where the user is either the caller or receiver
+    return call.caller && call.receiver && (call.caller._id === user._id || call.receiver._id === user._id);
   });
 
   // Call History Item Component
   const CallHistoryItem = ({ call }) => {
-    const otherParticipant = Array.isArray(call.participants)
-      ? call.participants.find(p => p._id !== user._id)
-      : null;
-    const isOutgoing = call.initiator === user._id;
+    const otherParticipant = call.caller._id === user._id ? call.receiver : call.caller;
+    const isOutgoing = call.caller._id === user._id;
 
     return (
       <div className="flex items-center justify-between p-4 hover:bg-gray-50 rounded-lg transition-colors">

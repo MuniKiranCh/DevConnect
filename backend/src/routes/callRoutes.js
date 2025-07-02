@@ -11,19 +11,19 @@ callRouter.use(userAuth);
 callRouter.post('/initiate/:receiverId', validateObjectId, initiateCall);
 
 // Accept a call
-callRouter.patch('/accept/:callId', validateObjectId, acceptCall);
+callRouter.patch('/accept/:callId', acceptCall);
 
 // Decline a call
-callRouter.patch('/decline/:callId', validateObjectId, declineCall);
+callRouter.patch('/decline/:callId', declineCall);
 
 // End a call
-callRouter.patch('/end/:callId', validateObjectId, endCall);
+callRouter.patch('/end/:callId', endCall);
 
 // Get call history
 callRouter.get('/history', getCallHistory);
 
 // Get call details
-callRouter.get('/:callId', validateObjectId, getCallDetails);
+callRouter.get('/:callId', getCallDetails);
 
 // WebRTC signaling routes
 callRouter.post('/:callId/offer', validateObjectId, storeOffer);

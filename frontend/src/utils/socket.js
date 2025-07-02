@@ -188,17 +188,17 @@ class SocketService {
     }
   }
 
-  acceptCall(callerId, callType = 'video') {
+  acceptCall(callerId, callType = 'video', callId) {
     if (this.socket && this.socket.connected) {
-      this.socket.emit('accept_call', { callerId, callType });
+      this.socket.emit('accept_call', { callerId, callType, callId });
     } else {
       console.warn('Cannot accept call: socket not connected');
     }
   }
 
-  declineCall(callerId, callType = 'video') {
+  declineCall(callerId, callType = 'video', callId) {
     if (this.socket && this.socket.connected) {
-      this.socket.emit('decline_call', { callerId, callType });
+      this.socket.emit('decline_call', { callerId, callType, callId });
     } else {
       console.warn('Cannot decline call: socket not connected');
     }

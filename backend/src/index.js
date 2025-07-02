@@ -142,81 +142,111 @@ io.on('connection', (socket) => {
     });
 
     // 1:1 Call Signaling
-    socket.on('initiate_call', (data) => {
-        const { receiverId, callType } = data;
-        console.log(`[SOCKET] Call initiated by ${socket.userId} to ${receiverId}`);
-        console.log(`[SOCKET] Current connected users:`, Array.from(connectedUsers.entries()));
-        
+    socket.on('initiate_call', async (data) => {
+        const { receiverId, callType, callId } = data;
+        // Only notify the receiver, do not create the call in the DB here
         const receiverSocketId = connectedUsers.get(receiverId);
         if (receiverSocketId) {
             io.to(receiverSocketId).emit('incoming_call', {
                 callerId: socket.userId,
                 callType: callType || 'video',
+                callId
             });
             console.log(`[SOCKET] Incoming call sent to ${receiverId}`);
         } else {
-            console.log(`[SOCKET] User ${receiverId} not connected`);
-            console.log(`[SOCKET] Available users:`, Array.from(connectedUsers.keys()));
             io.to(socket.id).emit('call_participant_offline', {
                 message: 'User is not online'
             });
         }
     });
 
-    socket.on('accept_call', (data) => {
-        const { callerId, callType } = data;
+    socket.on('accept_call', async (data) => {
+        const { callerId, callType, callId } = data;
         console.log(`[SOCKET] Call accepted by ${socket.userId}`);
-        
+        const Call = require('./models/callModel');
+        let call = await Call.findOne({ callId });
+        if (call) {
+          call.status = 'accepted';
+          call.startTime = new Date();
+          await call.save();
+        }
         const callerSocketId = connectedUsers.get(callerId);
         if (callerSocketId) {
             io.to(callerSocketId).emit('call_accepted', {
                 receiverId: socket.userId,
                 callType: callType || 'video',
+                callId
             });
             console.log(`[SOCKET] Call accepted event sent to ${callerId}`);
         }
+        io.to(socket.id).emit('call_updated', { callId, status: 'accepted' });
+        if (callerSocketId) {
+            io.to(callerSocketId).emit('call_updated', { callId, status: 'accepted' });
+        }
     });
 
-    socket.on('decline_call', (data) => {
-        const { callerId, callType } = data;
+    socket.on('decline_call', async (data) => {
+        const { callerId, callType, callId } = data;
         console.log(`[SOCKET] Call declined by ${socket.userId}`);
-        
+        const Call = require('./models/callModel');
+        let call = await Call.findOne({ callId });
+        if (call) {
+          call.status = 'declined';
+          await call.save();
+        }
         const callerSocketId = connectedUsers.get(callerId);
         if (callerSocketId) {
             io.to(callerSocketId).emit('call_declined', {
                 receiverId: socket.userId,
                 callType: callType || 'video',
+                callId
             });
             console.log(`[SOCKET] Call declined event sent to ${callerId}`);
         }
+        io.to(socket.id).emit('call_updated', { callId, status: 'declined' });
+        if (callerSocketId) {
+            io.to(callerSocketId).emit('call_updated', { callId, status: 'declined' });
+        }
     });
 
-    socket.on('end_call', (data) => {
-        const { receiverId, callType } = data;
+    socket.on('end_call', async (data) => {
+        const { receiverId, callType, callId } = data;
         console.log(`[SOCKET] Call ended by ${socket.userId}`);
-
-        // Always emit to both users (the one who ended and the other participant)
+        const Call = require('./models/callModel');
+        let call = await Call.findOne({ callId });
+        if (call && call.status === 'accepted') {
+          call.status = 'ended';
+          call.endTime = new Date();
+          if (call.startTime) {
+            call.duration = Math.floor((call.endTime - call.startTime) / 1000);
+          }
+          await call.save();
+        }
         const senderUserId = socket.userId;
         const receiverUserId = receiverId;
-
         const senderSocketId = connectedUsers.get(senderUserId);
         const receiverSocketId = connectedUsers.get(receiverUserId);
-
-        // Emit to the sender (the one who ended the call)
         if (senderSocketId) {
             io.to(senderSocketId).emit('call_ended', {
                 callerId: senderUserId,
                 callType: callType || 'video',
+                callId
             });
             console.log(`[SOCKET] Call ended event sent to sender ${senderUserId}`);
         }
-        // Emit to the receiver (the other participant)
         if (receiverSocketId) {
             io.to(receiverSocketId).emit('call_ended', {
                 callerId: senderUserId,
                 callType: callType || 'video',
+                callId
             });
             console.log(`[SOCKET] Call ended event sent to receiver ${receiverUserId}`);
+        }
+        if (senderSocketId) {
+            io.to(senderSocketId).emit('call_updated', { callId, status: 'ended' });
+        }
+        if (receiverSocketId) {
+            io.to(receiverSocketId).emit('call_updated', { callId, status: 'ended' });
         }
     });
 
