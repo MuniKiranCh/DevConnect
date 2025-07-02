@@ -1,109 +1,69 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Card, CardContent } from '../components/UI/Card';
+import  Button  from '../components/UI/Button';
+import  Input  from '../components/UI/Input';
+import Avatar from '../components/UI/Avatar';
 import { 
   Phone, 
   Video, 
   PhoneOff, 
+  VideoOff, 
   Mic, 
   MicOff, 
-  VideoOff, 
-  MoreVertical,
-  Search,
-  Calendar,
-  Clock,
-  User,
-  Users
+  Search, 
+  Clock, 
+  Users,
+  Calendar
 } from 'lucide-react';
-import { Card, CardHeader, CardTitle, CardContent, Button, Input, Avatar } from '../components/UI';
-import { useCallsStore, useAuthStore, useConnectionsStore } from '../utils/store';
+import { useAuthStore } from '../utils/store';
+import { useConnectionsStore } from '../utils/store';
+import socketService from '../utils/socket';
 import { callAPI } from '../utils/api';
-import toast from 'react-hot-toast';
-import io from 'socket.io-client';
+import { toast } from 'react-hot-toast';
 
-const socket = io('http://192.168.155.234:3000'); // Adjust if backend URL changes
-const RINGTONE_URL = 'https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg';
-
-// STUN server configuration like the working example
 const STUN_SERVER = {
-  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' }
+  ]
 };
 
+const RINGTONE_URL = 'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav';
+
 const Calls = () => {
-  const user = useAuthStore((state) => state.user);
+  const { user } = useAuthStore();
   const { connections } = useConnectionsStore();
-  const { callHistory, setCallHistory } = useCallsStore();
-  
+  const [callHistory, setCallHistory] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('history');
   const [searchQuery, setSearchQuery] = useState('');
-  const [currentCall, setCurrentCall] = useState(null);
-  const [isMuted, setIsMuted] = useState(false);
-  const [isVideoOff, setIsVideoOff] = useState(false);
-  const [selectedParticipants, setSelectedParticipants] = useState([]);
+  const [activeTab, setActiveTab] = useState('history');
+  const [socketConnected, setSocketConnected] = useState(false);
+
+  // Call states
   const [incomingCall, setIncomingCall] = useState(null);
   const [isRinging, setIsRinging] = useState(false);
   const [inCall, setInCall] = useState(false);
   const [callType, setCallType] = useState('video');
-  const [isCameraOff, setIsCameraOff] = useState(false);
   const [callStatus, setCallStatus] = useState('');
-  const [socketConnected, setSocketConnected] = useState(false);
-  const [processingPendingCall, setProcessingPendingCall] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(false);
 
-  // WebRTC refs and state - following the working example pattern
-  const localStreamRef = useRef(null);
+  // Refs
   const localVideoRef = useRef(null);
+  const remoteVideoRef = useRef(null);
+  const localStreamRef = useRef(null);
+  const remoteStreamRef = useRef(null);
+  const peerConnectionRef = useRef(null);
   const ringtoneRef = useRef(null);
-  const connectionsRef = useRef({}); // Store peer connections like the example
-  const [remoteStreams, setRemoteStreams] = useState({});
 
-  useEffect(() => {
-    fetchCallHistory();
-  }, []);
+  // Filter connections to only show accepted ones
+  const acceptedConnections = connections.filter(conn => conn.status === 'accepted' || !conn.status);
 
-  // Handle pending calls from other pages
+  // Monitor socket connection status
   useEffect(() => {
-    const pendingCall = sessionStorage.getItem('pendingCall');
-    if (pendingCall && !processingPendingCall) {
-      try {
-        const callData = JSON.parse(pendingCall);
-        console.log('Found pending call from other page:', callData);
-        
-        // Set processing flag to prevent duplicate handling
-        setProcessingPendingCall(true);
-        
-        // Clear the pending call data immediately
-        sessionStorage.removeItem('pendingCall');
-        
-        // If the call was accepted, start the call process
-        if (callData.accepted) {
-          console.log('Processing accepted call from other page...');
-          setIncomingCall(callData);
-          setCallType(callData.callType);
-          
-          // Wait a bit for the component to fully mount before starting call
-          setTimeout(() => {
-            console.log('Starting call process for accepted call...');
-            acceptIncomingCall();
-            setProcessingPendingCall(false);
-          }, 500);
-        } else {
-          setProcessingPendingCall(false);
-        }
-      } catch (error) {
-        console.error('Error parsing pending call data:', error);
-        sessionStorage.removeItem('pendingCall');
-        setProcessingPendingCall(false);
-      }
-    }
-  }, [processingPendingCall]);
+    const socket = socketService.getSocket();
+    if (!socket) return;
 
-  // Join socket room for receiving calls
-  useEffect(() => {
-    if (user?._id) {
-      socket.emit('join', user._id);
-      console.log(`Joined socket room as user: ${user._id}`);
-    }
-    
-    // Monitor socket connection status
     const handleConnect = () => {
       setSocketConnected(true);
       console.log('Socket connected in Calls page');
@@ -124,133 +84,194 @@ const Calls = () => {
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
     };
-  }, [user?._id]);
+  }, []);
 
-  // Handle incoming call signaling
+  // Socket event listeners for calls
   useEffect(() => {
+    const socket = socketService.getSocket();
+    if (!socket) return;
+
+    // Incoming call handler
     socket.on('incoming_call', (data) => {
-      // Ignore if the current user is the caller
-      if (data.callerId === user?._id) return;
-      console.log('Received incoming call in Calls page:', data);
-      setIncomingCall(data);
+      console.log('Incoming call received:', data);
+      const { callerId, callType } = data;
+      
+      // Find caller info
+      const caller = acceptedConnections.find(c => c._id === callerId);
+      if (!caller) {
+        console.error('Caller not found in connections');
+        return;
+      }
+
+      setIncomingCall({
+        callerId,
+        callType,
+        callerName: `${caller.firstName} ${caller.lastName}`,
+        callerPhoto: caller.photoUrl
+      });
+      setCallType(callType);
       setIsRinging(true);
       
-      // Play ringtone with better error handling
+      // Play ringtone
       if (ringtoneRef.current) {
-        ringtoneRef.current.muted = false;
-        ringtoneRef.current.volume = 0.5;
-        ringtoneRef.current.play().catch(error => {
-          console.error('Error playing ringtone in Calls page:', error);
-          // Try again with user interaction
-          const playPromise = ringtoneRef.current.play();
-          if (playPromise !== undefined) {
-            playPromise.catch(e => console.error('Ringtone play failed:', e));
-          }
-        });
+        ringtoneRef.current.play().catch(e => console.error('Failed to play ringtone:', e));
       }
     });
 
-    socket.on('call_ended', () => {
-      console.log('Call ended in Calls page');
-      setIncomingCall(null);
+    // Call accepted handler
+    socket.on('call_accepted', (data) => {
+      console.log('Call accepted:', data);
       setIsRinging(false);
-      endCallCleanup();
+      setIncomingCall(null);
+      setInCall(true);
+      setCallStatus('in-call');
       
       // Stop ringtone
       if (ringtoneRef.current) {
         ringtoneRef.current.pause();
         ringtoneRef.current.currentTime = 0;
       }
+      
+      toast.success('Call connected!');
     });
 
-    // Handle offline participants notification
-    socket.on('call_participants_offline', (data) => {
-      console.log('Some participants are offline:', data);
-      const offlineNames = data.offlineParticipants.map(pid => 
-        connections.find(c => c._id === pid)?.firstName || pid
-      ).join(', ');
-      toast.error(`Cannot reach: ${offlineNames}. They may be offline.`);
+    // Call declined handler
+    socket.on('call_declined', (data) => {
+      console.log('Call declined:', data);
+      setIsRinging(false);
+      setIncomingCall(null);
+      setCallStatus('declined');
+      
+      // Stop ringtone
+      if (ringtoneRef.current) {
+        ringtoneRef.current.pause();
+        ringtoneRef.current.currentTime = 0;
+      }
+      
+      toast.info('Call was declined');
+      endCallCleanup();
+    });
+
+    // Call ended handler
+    socket.on('call_ended', (data) => {
+      console.log('Call ended:', data);
+      setIsRinging(false);
+      setIncomingCall(null);
+      setInCall(false);
+      setCallStatus('ended');
+      
+      // Stop ringtone
+      if (ringtoneRef.current) {
+        ringtoneRef.current.pause();
+        ringtoneRef.current.currentTime = 0;
+      }
+      
+      toast.info('Call ended');
+      endCallCleanup();
+    });
+
+    // Participant offline handler
+    socket.on('call_participant_offline', (data) => {
+      console.log('Call participant offline:', data);
+      toast.error('User is not online');
+      endCallCleanup();
     });
 
     return () => {
       socket.off('incoming_call');
+      socket.off('call_accepted');
+      socket.off('call_declined');
       socket.off('call_ended');
-      socket.off('call_participants_offline');
+      socket.off('call_participant_offline');
     };
-  }, [connections]);
+  }, [acceptedConnections]);
 
-  // WebRTC signaling handlers - following the working example pattern
+  // WebRTC signaling handlers
   useEffect(() => {
-    socket.on('webrtc_offer', async (data) => {
-      const { callerId, offer, participantIds } = data;
-      if (callerId === user._id) return;
-      console.log(`[WebRTC] Received offer from ${callerId} (user: ${user._id})`, data);
+    const socket = socketService.getSocket();
+    if (!socket) return;
 
-      let localStream = localStreamRef.current;
-      if (!localStream) {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: callType === 'video', audio: true });
+    // Handle WebRTC offer
+    socket.on('webrtc_offer', async (data) => {
+      const { callerId, offer, callType } = data;
+      console.log('Received WebRTC offer:', data);
+
+      try {
+        // Get local media stream
+        const localStream = await navigator.mediaDevices.getUserMedia({ 
+          video: callType === 'video', 
+          audio: true 
+        });
         localStreamRef.current = localStream;
+        
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = localStream;
         }
-      }
 
-      let peerConnection = connectionsRef.current[callerId];
-      if (!peerConnection) {
-        peerConnection = new RTCPeerConnection(STUN_SERVER);
-        connectionsRef.current[callerId] = peerConnection;
-        console.log(`[WebRTC] Created peer connection for ${callerId}`);
+        // Create peer connection
+        const peerConnection = new RTCPeerConnection(STUN_SERVER);
+        peerConnectionRef.current = peerConnection;
 
-        localStream.getTracks().forEach((track) => {
+        // Add local stream tracks
+        localStream.getTracks().forEach(track => {
           peerConnection.addTrack(track, localStream);
         });
 
-        peerConnection.onicecandidate = (event) => {
-          if (event.candidate) {
-            console.log(`[WebRTC] Sending ICE candidate to ${callerId}`, event.candidate);
-            socket.emit('ice_candidate', {
-              participantIds,
-              candidate: event.candidate,
-              callId: null,
-            });
+        // Handle remote stream
+        peerConnection.ontrack = (event) => {
+          console.log('Received remote stream');
+          remoteStreamRef.current = event.streams[0];
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = event.streams[0];
           }
         };
 
-        peerConnection.ontrack = (event) => {
-          console.log(`[WebRTC] Receiving remote stream from ${callerId}`, event.streams[0]);
-          setRemoteStreams(prev => ({
-            ...prev,
-            [callerId]: event.streams[0]
-          }));
+        // Handle ICE candidates
+        peerConnection.onicecandidate = (event) => {
+          if (event.candidate) {
+            socketService.sendIceCandidate(callerId, event.candidate, callType);
+          }
         };
-      }
 
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await peerConnection.createAnswer();
-      await peerConnection.setLocalDescription(answer);
-      console.log(`[WebRTC] Sending answer to ${callerId}`);
-      socket.emit('webrtc_answer', {
-        participantIds,
-        answer,
-        callId: null,
-      });
+        // Set remote description and create answer
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+
+        // Send answer back
+        socketService.sendWebRTCAnswer(callerId, answer, callType);
+
+      } catch (error) {
+        console.error('Error handling WebRTC offer:', error);
+        toast.error('Failed to establish connection');
+      }
     });
 
+    // Handle WebRTC answer
     socket.on('webrtc_answer', async (data) => {
-      const { receiverId, answer } = data;
-      const peerConnection = connectionsRef.current[receiverId];
-      if (peerConnection) {
-        console.log(`[WebRTC] Received answer from ${receiverId}`);
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+      const { receiverId, answer, callType } = data;
+      console.log('Received WebRTC answer:', data);
+
+      if (peerConnectionRef.current) {
+        try {
+          await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+        } catch (error) {
+          console.error('Error setting remote description:', error);
+        }
       }
     });
 
+    // Handle ICE candidates
     socket.on('ice_candidate', async (data) => {
-      const { senderId, candidate } = data;
-      const peerConnection = connectionsRef.current[senderId];
-      if (peerConnection && candidate) {
-        console.log(`[WebRTC] Adding ICE candidate from ${senderId}`, candidate);
-        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+      const { senderId, candidate, callType } = data;
+      console.log('Received ICE candidate:', data);
+
+      if (peerConnectionRef.current && candidate) {
+        try {
+          await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (error) {
+          console.error('Error adding ICE candidate:', error);
+        }
       }
     });
 
@@ -259,7 +280,12 @@ const Calls = () => {
       socket.off('webrtc_answer');
       socket.off('ice_candidate');
     };
-  }, [user._id, callType]);
+  }, []);
+
+  // Fetch call history
+  useEffect(() => {
+    fetchCallHistory();
+  }, []);
 
   const fetchCallHistory = async () => {
     try {
@@ -269,12 +295,12 @@ const Calls = () => {
     } catch (error) {
       console.error('Failed to load call history:', error);
       
-      // Fallback to mock call history - only include accepted connections
+      // Fallback to mock call history
       const mockCalls = acceptedConnections.slice(0, 2).map((connection, index) => ({
         _id: `mock-${index + 1}`,
         callType: index === 0 ? 'video' : 'audio',
         status: index === 0 ? 'completed' : 'missed',
-        duration: index === 0 ? 1800 : 0, // 30 minutes for completed call
+        duration: index === 0 ? 1800 : 0,
         createdAt: new Date(Date.now() - (index + 1) * 2 * 60 * 60 * 1000),
         participants: [
           {
@@ -294,48 +320,228 @@ const Calls = () => {
       }));
       
       setCallHistory(mockCalls);
-      toast.error('Failed to load call history, showing mock data');
     } finally {
       setLoading(false);
     }
   };
 
-  const initiateCall = async (userId, callType = 'video') => {
-    try {
-      const response = await callAPI.initiateCall(userId, { callType });
-      setCurrentCall(response.data.call);
-      toast.success(`${callType === 'video' ? 'Video' : 'Audio'} call initiated`);
-    } catch (error) {
-      toast.error('Failed to initiate call');
+  // Initiate call
+  const initiateCall = async (receiverId, type = 'video') => {
+    // Check both the state and actual socket connection
+    const socket = socketService.getSocket();
+    if (!socketConnected || !socket || !socket.connected) {
+      console.error('Socket not connected:', { socketConnected, socket: !!socket, connected: socket?.connected });
+      toast.error('You are not connected. Please check your internet connection.');
+      return;
     }
-  };
-
-  const endCall = async () => {
-    if (!currentCall) return;
     
+    console.log('Socket connection verified, proceeding with call...');
+
+    setCallType(type);
+    setCallStatus('calling');
+    setInCall(true);
+
     try {
-      await callAPI.endCall(currentCall._id);
-      setCurrentCall(null);
-      setIsMuted(false);
-      setIsVideoOff(false);
-      toast.success('Call ended');
+      // Get local media stream
+      const localStream = await navigator.mediaDevices.getUserMedia({ 
+        video: type === 'video', 
+        audio: true 
+      });
+      localStreamRef.current = localStream;
+      
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = localStream;
+      }
+
+      // Create peer connection
+      const peerConnection = new RTCPeerConnection(STUN_SERVER);
+      peerConnectionRef.current = peerConnection;
+
+      // Add local stream tracks
+      localStream.getTracks().forEach(track => {
+        peerConnection.addTrack(track, localStream);
+      });
+
+      // Handle remote stream
+      peerConnection.ontrack = (event) => {
+        console.log('Received remote stream');
+        remoteStreamRef.current = event.streams[0];
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = event.streams[0];
+        }
+      };
+
+      // Handle ICE candidates
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          socketService.sendIceCandidate(receiverId, event.candidate, type);
+        }
+      };
+
+      // Initiate call first
+      socketService.initiateCall(receiverId, type);
+
+      // Create and send offer
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      
+      // Check socket connection again before sending offer
+      if (socket && socket.connected) {
+        socketService.sendWebRTCOffer(receiverId, offer, type);
+      } else {
+        console.error('Socket disconnected while creating offer');
+        toast.error('Connection lost while starting call');
+        endCallCleanup();
+        return;
+      }
+
     } catch (error) {
-      toast.error('Failed to end call');
+      console.error('Failed to start call:', error);
+      toast.error('Failed to start call: ' + error.message);
+      endCallCleanup();
     }
   };
 
+  // Accept incoming call
+  const acceptIncomingCall = async () => {
+    if (!incomingCall) return;
+
+    setIsRinging(false);
+    
+    // Stop ringtone
+    if (ringtoneRef.current) {
+      ringtoneRef.current.pause();
+      ringtoneRef.current.currentTime = 0;
+    }
+
+    try {
+      // Get local media stream
+      const localStream = await navigator.mediaDevices.getUserMedia({ 
+        video: incomingCall.callType === 'video', 
+        audio: true 
+      });
+      localStreamRef.current = localStream;
+      
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = localStream;
+      }
+
+      // Accept the call
+      socketService.acceptCall(incomingCall.callerId, incomingCall.callType);
+      
+      setIncomingCall(null);
+      setInCall(true);
+      setCallType(incomingCall.callType);
+      setCallStatus('in-call');
+      
+      toast.success('Call accepted!');
+
+    } catch (error) {
+      console.error('Failed to accept call:', error);
+      toast.error('Failed to accept call: ' + error.message);
+      endCallCleanup();
+    }
+  };
+
+  // Decline incoming call
+  const declineIncomingCall = () => {
+    if (!incomingCall) return;
+
+    setIsRinging(false);
+    
+    // Stop ringtone
+    if (ringtoneRef.current) {
+      ringtoneRef.current.pause();
+      ringtoneRef.current.currentTime = 0;
+    }
+
+    // Decline the call
+    socketService.declineCall(incomingCall.callerId, incomingCall.callType);
+    
+    setIncomingCall(null);
+    toast.info('Call declined');
+  };
+
+  // End call
+  const endCall = () => {
+    if (incomingCall) {
+      socketService.declineCall(incomingCall.callerId, incomingCall.callType);
+    } else if (remoteStreamRef.current) {
+      // Find the other participant from the remote stream
+      const otherParticipant = acceptedConnections.find(c => 
+        c._id !== user._id && remoteStreamRef.current
+      );
+      if (otherParticipant) {
+        socketService.endCall(otherParticipant._id, callType);
+      }
+    }
+
+    setIncomingCall(null);
+    setInCall(false);
+    setCallStatus('ended');
+    endCallCleanup();
+    toast.info('Call ended');
+  };
+
+  // Cleanup function
+  const endCallCleanup = () => {
+    // Close peer connection
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+    
+    // Stop local stream
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
+      localStreamRef.current = null;
+    }
+    
+    // Clear remote stream
+    remoteStreamRef.current = null;
+    
+    // Reset UI state
+    setInCall(false);
+    setCallStatus('');
+    setIsMuted(false);
+    setIsVideoOff(false);
+  };
+
+  // Toggle mute
+  const toggleMute = () => {
+    if (localStreamRef.current) {
+      const audioTracks = localStreamRef.current.getAudioTracks();
+      audioTracks.forEach(track => {
+        track.enabled = !track.enabled;
+      });
+      setIsMuted(!isMuted);
+    }
+  };
+
+  // Toggle video
+  const toggleVideo = () => {
+    if (localStreamRef.current) {
+      const videoTracks = localStreamRef.current.getVideoTracks();
+      videoTracks.forEach(track => {
+        track.enabled = !track.enabled;
+      });
+      setIsVideoOff(!isVideoOff);
+    }
+  };
+
+  // Format duration
   const formatDuration = (seconds) => {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
 
+  // Format date
   const formatDate = (date) => {
     return new Date(date).toLocaleDateString();
   };
 
-  // Filter call history to only include accepted connections
-  const acceptedConnections = connections.filter(conn => conn.status === 'accepted' || !conn.status);
+  // Filter call history
   const filteredCallHistory = callHistory.filter(call => {
     const otherParticipant = Array.isArray(call.participants)
       ? call.participants.find(p => p._id !== user._id)
@@ -345,6 +551,7 @@ const Calls = () => {
     return isAcceptedConnection && matchesSearch;
   });
 
+  // Call History Item Component
   const CallHistoryItem = ({ call }) => {
     const otherParticipant = Array.isArray(call.participants)
       ? call.participants.find(p => p._id !== user._id)
@@ -379,329 +586,64 @@ const Calls = () => {
             <h3 className="font-medium text-gray-900">
               {otherParticipant?.firstName} {otherParticipant?.lastName}
             </h3>
-            <div className="flex items-center space-x-2 text-sm text-gray-500">
-              <span>{isOutgoing ? 'Outgoing' : 'Incoming'}</span>
-              <span>•</span>
-              <span>{call.callType}</span>
-              {call.duration && (
-                <>
-                  <span>•</span>
-                  <span>{formatDuration(call.duration)}</span>
-                </>
-              )}
-            </div>
+            <p className="text-sm text-gray-500">
+              {isOutgoing ? 'Outgoing' : 'Incoming'} • {call.callType} • {formatDate(call.createdAt)}
+            </p>
+            {call.duration > 0 && (
+              <p className="text-xs text-gray-400">{formatDuration(call.duration)}</p>
+            )}
           </div>
         </div>
-        <div className="flex items-center space-x-4">
-          <div className="text-right">
-            <p className="text-sm text-gray-500">{formatDate(call.createdAt)}</p>
-            <p className="text-xs text-gray-400">{new Date(call.createdAt).toLocaleTimeString()}</p>
-          </div>
-          <div className="flex items-center space-x-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => quickCall(otherParticipant?._id, call.callType)}
-            >
-              {call.callType === 'video' ? <Video className="h-4 w-4" /> : <Phone className="h-4 w-4" />}
-            </Button>
-            <button className="p-2 hover:bg-gray-100 rounded-full">
-              <MoreVertical className="h-4 w-4 text-gray-500" />
-            </button>
-          </div>
+        <div className="flex space-x-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => initiateCall(otherParticipant._id, 'audio')}
+          >
+            <Phone className="h-4 w-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => initiateCall(otherParticipant._id, 'video')}
+          >
+            <Video className="h-4 w-4" />
+          </Button>
         </div>
       </div>
     );
   };
 
+  // Call Controls Component
   const CallControls = () => (
-    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4">
-      <div className="flex items-center justify-center space-x-4">
+    <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 flex items-center space-x-4 bg-white p-4 rounded-full shadow-lg border">
+      <Button
+        size="lg"
+        onClick={toggleMute}
+        className={isMuted ? 'bg-red-100 text-red-600' : ''}
+      >
+        {isMuted ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+      </Button>
+      
+      {callType === 'video' && (
         <Button
-          variant="outline"
           size="lg"
-          onClick={() => setIsMuted(!isMuted)}
-          className={isMuted ? 'bg-red-100 text-red-600' : ''}
-        >
-          {isMuted ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
-        </Button>
-        
-        <Button
-          variant="outline"
-          size="lg"
-          onClick={() => setIsVideoOff(!isVideoOff)}
+          onClick={toggleVideo}
           className={isVideoOff ? 'bg-red-100 text-red-600' : ''}
         >
           {isVideoOff ? <VideoOff className="h-5 w-5" /> : <Video className="h-5 w-5" />}
         </Button>
-        
-        <Button
-          size="lg"
-          onClick={endCallForAll}
-          className="bg-red-600 hover:bg-red-700"
-        >
-          <PhoneOff className="h-5 w-5" />
-        </Button>
-      </div>
+      )}
+      
+      <Button
+        size="lg"
+        onClick={endCall}
+        className="bg-red-600 hover:bg-red-700"
+      >
+        <PhoneOff className="h-5 w-5" />
+      </Button>
     </div>
   );
-
-  // Quick Call (1:1) handler
-  const quickCall = async (userId, type = 'video') => {
-    setCallType(type);
-    setCallStatus('calling');
-    setSelectedParticipants([userId]);
-    await startGroupCall([userId], type);
-  };
-
-  // Helper to create and send offer to a peer
-  async function createAndSendOffer(pid, localStream, participantIds, callId = null) {
-    const peerConnection = new RTCPeerConnection(STUN_SERVER);
-    connectionsRef.current[pid] = peerConnection;
-
-    // Add local tracks
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-    // ICE
-    peerConnection.onicecandidate = (event) => {
-      if (event.candidate) {
-        socket.emit('ice_candidate', {
-          participantIds,
-          candidate: event.candidate,
-          callId,
-        });
-      }
-    };
-
-    // Remote stream
-    peerConnection.ontrack = (event) => {
-      setRemoteStreams(prev => ({
-        ...prev,
-        [pid]: event.streams[0]
-      }));
-    };
-
-    // Create and send offer
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-    socket.emit('webrtc_offer', {
-      participantIds,
-      offer,
-      callId,
-    });
-  }
-
-  // Start group call - refactored to match working example
-  const startGroupCall = async (participantIds = selectedParticipants, type = 'video') => {
-    if (participantIds.length === 0) return;
-    setCallType(type);
-    setCallStatus('calling');
-    setInCall(true);
-    try {
-      const localStream = await navigator.mediaDevices.getUserMedia({ video: type === 'video', audio: true });
-      localStreamRef.current = localStream;
-      if (localVideoRef.current) localVideoRef.current.srcObject = localStream;
-      socket.emit('initiate_call', { participantIds: [user._id, ...participantIds], callType: type });
-      // Symmetrical: create peer connections and send offers to all others
-      participantIds.forEach(pid => {
-        if (pid !== user._id) createAndSendOffer(pid, localStream, [user._id, ...participantIds]);
-      });
-    } catch (error) {
-      toast.error('Failed to start call: ' + error.message);
-      endCallCleanup();
-    }
-  };
-
-  // End call handler
-  const endCallForAll = () => {
-    setInCall(false);
-    setCallStatus('ended');
-    endCallCleanup();
-    
-    socket.emit('end_call', {
-      participantIds: Object.keys(connectionsRef.current),
-      callId: null,
-    });
-  };
-
-  // Cleanup function
-  const endCallCleanup = () => {
-    // Close all peer connections
-    Object.values(connectionsRef.current).forEach(pc => {
-      pc.close();
-    });
-    connectionsRef.current = {};
-    
-    // Stop local stream
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
-      localStreamRef.current = null;
-    }
-    
-    // Clear remote streams
-    setRemoteStreams({});
-    
-    // Reset UI state
-    setInCall(false);
-    setCallStatus('');
-    setIsMuted(false);
-    setIsVideoOff(false);
-    setIsCameraOff(false);
-  };
-
-  // Mute/Unmute
-  const toggleMute = () => {
-    setIsMuted((prev) => {
-      if (localStreamRef.current) {
-        localStreamRef.current.getAudioTracks().forEach(track => track.enabled = prev);
-      }
-      return !prev;
-    });
-  };
-
-  // Camera On/Off
-  const toggleCamera = () => {
-    setIsCameraOff((prev) => {
-      if (localStreamRef.current) {
-        localStreamRef.current.getVideoTracks().forEach(track => track.enabled = prev);
-      }
-      return !prev;
-    });
-  };
-
-  // Video layout rendering
-  const renderVideoLayout = () => {
-    const remoteEntries = Object.entries(remoteStreams);
-    console.log('[VIDEO] Rendering video layout with remote streams:', remoteEntries.map(([id, stream]) => ({ id, tracks: stream.getTracks().map(t => t.kind) })));
-    
-    // 1:1 call: show remote big, local small
-    if (remoteEntries.length === 1) {
-      const [peerId, stream] = remoteEntries[0];
-      const participant = connections.find(c => c._id === peerId);
-      console.log('[VIDEO] Rendering 1:1 call layout for peer:', peerId, 'participant:', participant?.firstName);
-      return (
-        <div className="relative w-full h-96 flex items-center justify-center bg-black rounded-lg">
-          <video
-            srcObject={stream}
-            autoPlay
-            playsInline
-            className="w-full h-96 object-cover rounded-lg"
-            onLoadedMetadata={() => console.log('[VIDEO] Remote video loaded metadata')}
-            onCanPlay={() => console.log('[VIDEO] Remote video can play')}
-            onError={(e) => console.error('[VIDEO] Remote video error:', e)}
-          />
-          {/* Local video as small PiP */}
-          <div className="absolute bottom-4 right-4 w-32 h-24 bg-black rounded-lg border-2 border-white shadow-lg overflow-hidden">
-            <video 
-              ref={localVideoRef} 
-              autoPlay 
-              playsInline 
-              muted 
-              className="w-full h-full object-cover"
-              onLoadedMetadata={() => console.log('[VIDEO] Local video loaded metadata')}
-              onCanPlay={() => console.log('[VIDEO] Local video can play')}
-              onError={(e) => console.error('[VIDEO] Local video error:', e)}
-            />
-          </div>
-          <span className="absolute top-4 left-4 text-white bg-black bg-opacity-50 px-2 py-1 rounded">
-            {participant ? `${participant.firstName} ${participant.lastName}` : peerId}
-          </span>
-        </div>
-      );
-    }
-    
-    // Group call: show grid, local video as PiP
-    console.log('[VIDEO] Rendering group call layout with', remoteEntries.length, 'participants');
-    return (
-      <div className="relative w-full grid grid-cols-2 gap-4">
-        {remoteEntries.map(([peerId, stream]) => {
-          const participant = connections.find(c => c._id === peerId);
-          console.log('[VIDEO] Rendering participant video:', peerId, participant?.firstName);
-          return (
-            <div key={peerId} className="relative flex flex-col items-center">
-              <video
-                srcObject={stream}
-                autoPlay
-                playsInline
-                className="w-full h-60 object-cover rounded-lg bg-black"
-                onLoadedMetadata={() => console.log(`[VIDEO] Group video loaded metadata for ${peerId}`)}
-                onCanPlay={() => console.log(`[VIDEO] Group video can play for ${peerId}`)}
-                onError={(e) => console.error(`[VIDEO] Group video error for ${peerId}:`, e)}
-              />
-              <span className="absolute top-2 left-2 text-white bg-black bg-opacity-50 px-2 py-1 rounded">
-                {participant ? `${participant.firstName} ${participant.lastName}` : peerId}
-              </span>
-            </div>
-          );
-        })}
-        {/* Local video as PiP */}
-        <div className="absolute bottom-4 right-4 w-32 h-24 bg-black rounded-lg border-2 border-white shadow-lg overflow-hidden">
-          <video 
-            ref={localVideoRef} 
-            autoPlay 
-            playsInline 
-            muted 
-            className="w-full h-full object-cover"
-            onLoadedMetadata={() => console.log('[VIDEO] Local video loaded metadata (group)')}
-            onCanPlay={() => console.log('[VIDEO] Local video can play (group)')}
-            onError={(e) => console.error('[VIDEO] Local video error (group):', e)}
-          />
-        </div>
-      </div>
-    );
-  };
-
-  // UI for selecting participants
-  const handleSelectParticipant = (id) => {
-    setSelectedParticipants(prev =>
-      prev.includes(id) ? prev.filter(pid => pid !== id) : [...prev, id]
-    );
-  };
-
-  // Accept incoming call - refactored to match working example
-  const acceptIncomingCall = async () => {
-    setIsRinging(false);
-    if (ringtoneRef.current) { ringtoneRef.current.pause(); ringtoneRef.current.currentTime = 0; }
-    if (!incomingCall) return;
-    try {
-      const localStream = await navigator.mediaDevices.getUserMedia({ video: incomingCall.callType === 'video', audio: true });
-      localStreamRef.current = localStream;
-      if (localVideoRef.current) localVideoRef.current.srcObject = localStream;
-      socket.emit('accept_call', { participantIds: incomingCall.participantIds, callId: incomingCall.callId || null });
-      // Symmetrical: create peer connections and send offers to all others
-      incomingCall.participantIds.forEach(pid => {
-        if (pid !== user._id) createAndSendOffer(pid, localStream, incomingCall.participantIds, incomingCall.callId || null);
-      });
-      setIncomingCall(null);
-      setInCall(true);
-      setCallType(incomingCall.callType);
-      setCallStatus('in-call');
-      toast.success('Call accepted successfully!');
-    } catch (error) {
-      toast.error('Failed to accept call: ' + (error.message || error));
-      endCallCleanup();
-    }
-  };
-
-  // Decline incoming call
-  const declineIncomingCall = () => {
-    console.log('Declining incoming call...');
-    setIsRinging(false);
-    if (ringtoneRef.current) {
-      ringtoneRef.current.pause();
-      ringtoneRef.current.currentTime = 0;
-    }
-    
-    if (incomingCall) {
-      console.log('Notifying others of call decline...');
-      socket.emit('decline_call', {
-        participantIds: incomingCall.participantIds,
-        callId: incomingCall.callId || null,
-      });
-      toast.info('Call declined');
-    }
-    setIncomingCall(null);
-  };
 
   if (loading) {
     return (
@@ -735,6 +677,9 @@ const Calls = () => {
 
   return (
     <div className="space-y-6">
+      {/* Audio element for ringtone */}
+      <audio ref={ringtoneRef} src={RINGTONE_URL} loop />
+      
       <div>
         <div className="flex items-center justify-between">
           <div>
@@ -765,6 +710,16 @@ const Calls = () => {
         <Button variant="outline">
           <Calendar className="h-4 w-4 mr-2" />
           Filter
+        </Button>
+        <Button 
+          variant="outline" 
+          onClick={() => {
+            console.log('Manual join triggered');
+            socketService.forceJoin(user._id);
+          }}
+          className="bg-yellow-100 text-yellow-800 hover:bg-yellow-200"
+        >
+          Debug: Join Room
         </Button>
       </div>
 
@@ -814,7 +769,7 @@ const Calls = () => {
 
         {activeTab === 'contacts' && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {connections.map(connection => (
+            {acceptedConnections.map(connection => (
               <Card key={connection._id} className="hover:shadow-md transition-shadow">
                 <CardContent className="p-6">
                   <div className="text-center">
@@ -825,26 +780,30 @@ const Calls = () => {
                         size="xl"
                         status="online"
                       />
+                      <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-white rounded-full"></div>
                     </div>
                     <h3 className="font-semibold text-gray-900 mb-2">
                       {connection.firstName} {connection.lastName}
                     </h3>
                     <p className="text-sm text-gray-500 mb-4">
-                      {connection.skills?.slice(0, 2).join(', ')}
+                      {connection.title || 'Developer'}
                     </p>
-                    <div className="flex items-center justify-center space-x-2">
+                    <div className="flex justify-center space-x-2">
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => quickCall(connection._id, 'audio')}
+                        onClick={() => initiateCall(connection._id, 'audio')}
                       >
-                        <Phone className="h-4 w-4" />
+                        <Phone className="h-4 w-4 mr-1" />
+                        Audio
                       </Button>
                       <Button
                         size="sm"
-                        onClick={() => quickCall(connection._id, 'video')}
+                        variant="outline"
+                        onClick={() => initiateCall(connection._id, 'video')}
                       >
-                        <Video className="h-4 w-4" />
+                        <Video className="h-4 w-4 mr-1" />
+                        Video
                       </Button>
                     </div>
                   </div>
@@ -855,61 +814,88 @@ const Calls = () => {
         )}
       </div>
 
-      {/* Call UI (show when inCall) */}
-      {inCall && (
-        <div className="fixed inset-0 flex flex-col items-center justify-center bg-black bg-opacity-80 z-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-2xl">
-            <h2 className="text-lg font-bold mb-2">{callType === 'video' ? 'Video Call' : 'Audio Call'}</h2>
-            <div className="mb-4">{callStatus === 'calling' ? 'Calling...' : callStatus === 'in-call' ? 'In Call' : callStatus === 'ended' ? 'Call Ended' : ''}</div>
-            {renderVideoLayout()}
-            <div className="flex justify-center space-x-4 mt-4">
-              <Button onClick={toggleMute} variant="outline">{isMuted ? 'Unmute' : 'Mute'}</Button>
-              <Button onClick={toggleCamera} variant="outline">{isCameraOff ? 'Camera On' : 'Camera Off'}</Button>
-              <Button onClick={endCallForAll} className="bg-red-600 text-white">End Call</Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Incoming call modal */}
+      {/* Incoming Call Modal */}
       {isRinging && incomingCall && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
-          <div className="bg-white p-8 rounded-lg shadow-lg text-center">
-            <h2 className="text-xl font-bold mb-4">Incoming Call</h2>
-            <p className="mb-4">You have an incoming group call.</p>
+        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-75 z-50">
+          <div className="bg-white p-8 rounded-lg shadow-2xl text-center max-w-md w-full mx-4">
+            <div className="animate-pulse mb-4">
+              <div className="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                {incomingCall.callType === 'video' ? (
+                  <Video className="w-8 h-8 text-white" />
+                ) : (
+                  <Phone className="w-8 h-8 text-white" />
+                )}
+              </div>
+            </div>
+            <h2 className="text-2xl font-bold mb-2 text-gray-900">Incoming Call</h2>
+            <div className="flex flex-col items-center mb-4">
+              <Avatar
+                src={incomingCall.callerPhoto}
+                alt={incomingCall.callerName}
+                size="xl"
+                className="mb-2"
+              />
+              <span className="font-semibold text-lg">
+                {incomingCall.callerName} is calling you
+              </span>
+              <p className="text-sm text-gray-500 mt-1">
+                {incomingCall.callType === 'video' ? 'Video Call' : 'Audio Call'}
+              </p>
+            </div>
             <div className="flex justify-center space-x-4">
-              <button onClick={acceptIncomingCall} className="bg-green-500 text-white px-4 py-2 rounded">Accept</button>
-              <button onClick={declineIncomingCall} className="bg-red-500 text-white px-4 py-2 rounded">Decline</button>
+              <button 
+                onClick={acceptIncomingCall} 
+                className="bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg font-semibold transition-colors flex items-center space-x-2"
+              >
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+                <span>Accept</span>
+              </button>
+              <button 
+                onClick={declineIncomingCall} 
+                className="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-lg font-semibold transition-colors flex items-center space-x-2"
+              >
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+                <span>Decline</span>
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Participant selection UI */}
-      <div className="mb-4">
-        <h2 className="text-lg font-bold mb-2">Start Group Call</h2>
-        <div className="flex flex-wrap gap-2">
-          {connections.map(conn => (
-            <button
-              key={conn._id}
-              onClick={() => handleSelectParticipant(conn._id)}
-              className={`px-3 py-1 rounded-full border ${selectedParticipants.includes(conn._id) ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700'}`}
-            >
-              {conn.firstName} {conn.lastName}
-            </button>
-          ))}
+      {/* Active Call Interface */}
+      {inCall && (
+        <div className="fixed inset-0 bg-black z-40">
+          <div className="relative w-full h-full">
+            {/* Remote Video (Large) */}
+            <video
+              ref={remoteVideoRef}
+              autoPlay
+              playsInline
+              className="w-full h-full object-cover"
+            />
+            
+            {/* Local Video (Small - PiP) */}
+            {callType === 'video' && (
+              <div className="absolute top-4 right-4 w-48 h-36 bg-black rounded-lg border-2 border-white shadow-lg overflow-hidden">
+                <video 
+                  ref={localVideoRef} 
+                  autoPlay 
+                  playsInline 
+                  muted 
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            )}
+            
+            {/* Call Controls */}
+            <CallControls />
+          </div>
         </div>
-        <button
-          onClick={() => startGroupCall()}
-          className="mt-2 px-4 py-2 bg-blue-600 text-white rounded shadow"
-          disabled={selectedParticipants.length === 0}
-        >
-          Start Call
-        </button>
-      </div>
-
-      {/* Hidden audio element for ringtone */}
-      <audio ref={ringtoneRef} src={RINGTONE_URL} loop />
+      )}
     </div>
   );
 };

@@ -6,10 +6,19 @@ import { LoginForm, RegisterForm } from './components/Auth';
 import { Layout } from './components/Layout';
 import { Dashboard, Profile, Connections, Messages, Calls, Feed } from './pages';
 import './index.css';
-import io from 'socket.io-client';
+import socketService from './utils/socket';
 
-const RINGTONE_URL = 'https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg';
-const socket = io('http://192.168.155.234:3000'); // Adjust if backend URL changes
+// More reliable ringtone URLs with fallbacks
+const RINGTONE_URLS = [
+  'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav',
+  'https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg',
+  'https://www.soundjay.com/phone/sounds/phone-ring-1.wav',
+  'https://www.soundjay.com/phone/sounds/phone-ring-2.wav',
+  // Base64 encoded simple ringtone as fallback
+  'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT'
+];
+
+const RINGTONE_URL = RINGTONE_URLS[0]; // Use the first one as primary
 
 // Protected Route Component
 const ProtectedRoute = ({ children }) => {
@@ -43,12 +52,32 @@ const PublicRoute = ({ children }) => {
 
 // Main App Component with Navigation
 function AppContent() {
-  const { user } = useAuthStore();
+  const { user, token } = useAuthStore();
   const { connections } = useConnectionsStore();
   const [incomingCall, setIncomingCall] = useState(null);
   const [isRinging, setIsRinging] = useState(false);
   const ringtoneRef = useRef(null);
   const navigate = useNavigate();
+
+  // Initialize socket connection with authentication
+  useEffect(() => {
+    if (token && user?._id) {
+      console.log(`Initializing socket connection for user ${user._id}`);
+      const socket = socketService.connect(token);
+      
+      // Join will be handled automatically when connection is ready
+      socketService.join(user._id);
+      console.log(`User ${user._id} requested to join socket room globally`);
+      
+      // Also try to join after a short delay to ensure connection is ready
+      setTimeout(() => {
+        if (socket && socket.connected) {
+          console.log(`Retrying join for user ${user._id} after delay`);
+          socketService.join(user._id);
+        }
+      }, 1000);
+    }
+  }, [token, user?._id]);
 
   // Request notification permissions on app load
   useEffect(() => {
@@ -59,18 +88,10 @@ function AppContent() {
 
   // Join socket and listen for incoming calls globally
   useEffect(() => {
-    if (user?._id) {
-      // Ensure socket is connected before joining
-      if (socket.connected) {
-        socket.emit('join', user._id);
-        console.log(`User ${user._id} joined socket room globally`);
-      } else {
-        socket.on('connect', () => {
-          socket.emit('join', user._id);
-          console.log(`User ${user._id} joined socket room after connection`);
-        });
-      }
-    }
+    if (!user?._id) return;
+
+    const socket = socketService.getSocket();
+    if (!socket) return;
 
     // Handle incoming calls
     socket.on('incoming_call', (data) => {
@@ -84,6 +105,7 @@ function AppContent() {
       if (ringtoneRef.current) {
         ringtoneRef.current.muted = false;
         ringtoneRef.current.volume = 0.7;
+        ringtoneRef.current.currentTime = 0; // Reset to start
         ringtoneRef.current.play().catch(error => {
           console.error('Error playing ringtone:', error);
           // Fallback: try to play without user interaction
@@ -119,11 +141,33 @@ function AppContent() {
       }
     });
 
+    socket.on('call_accepted', () => {
+      console.log('Call accepted globally');
+      setIsRinging(false);
+      // Stop ringtone when call is accepted
+      if (ringtoneRef.current) {
+        ringtoneRef.current.pause();
+        ringtoneRef.current.currentTime = 0;
+      }
+    });
+
+    socket.on('call_declined', () => {
+      console.log('Call declined globally');
+      setIncomingCall(null);
+      setIsRinging(false);
+      // Stop ringtone when call is declined
+      if (ringtoneRef.current) {
+        ringtoneRef.current.pause();
+        ringtoneRef.current.currentTime = 0;
+      }
+    });
+
     // Handle socket connection events
     socket.on('connect', () => {
       console.log('Socket connected globally');
       if (user?._id) {
-        socket.emit('join', user._id);
+        // Join will be handled automatically by the socket service
+        console.log('Socket connected, join will be handled automatically');
       }
     });
 
@@ -140,6 +184,8 @@ function AppContent() {
       // Only remove event listeners, don't disconnect socket
       socket.off('incoming_call');
       socket.off('call_ended');
+      socket.off('call_accepted');
+      socket.off('call_declined');
       socket.off('connect');
       socket.off('disconnect');
       socket.off('connect_error');
@@ -150,16 +196,18 @@ function AppContent() {
   const acceptIncomingCall = () => {
     console.log('Accepting incoming call from global handler...');
     setIsRinging(false);
+    // Stop ringtone immediately when accepting
     if (ringtoneRef.current) {
       ringtoneRef.current.pause();
       ringtoneRef.current.currentTime = 0;
     }
     if (incomingCall) {
       console.log('Notifying others of call acceptance from global handler...');
-      socket.emit('accept_call', {
-        participantIds: incomingCall.participantIds,
-        callId: incomingCall.callId || null,
-      });
+      // Use socket service to accept call
+      socketService.acceptCall(
+        incomingCall.callerId,
+        incomingCall.callType
+      );
       
       // Store call data in sessionStorage for the Calls page
       sessionStorage.setItem('pendingCall', JSON.stringify({
@@ -177,16 +225,18 @@ function AppContent() {
   const declineIncomingCall = () => {
     console.log('Declining incoming call from global handler...');
     setIsRinging(false);
+    // Stop ringtone immediately when declining
     if (ringtoneRef.current) {
       ringtoneRef.current.pause();
       ringtoneRef.current.currentTime = 0;
     }
     if (incomingCall) {
       console.log('Notifying others of call decline from global handler...');
-      socket.emit('decline_call', {
-        participantIds: incomingCall.participantIds,
-        callId: incomingCall.callId || null,
-      });
+      // Use socket service to decline call
+      socketService.declineCall(
+        incomingCall.callerId,
+        incomingCall.callType
+      );
     }
     setIncomingCall(null);
   };

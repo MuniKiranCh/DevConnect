@@ -6,7 +6,8 @@ import { messageAPI, connectionAPI } from '../utils/api';
 import toast from 'react-hot-toast';
 import io from 'socket.io-client';
 
-const socket = io('http://192.168.155.234:3000'); // Adjust if backend URL changes
+const socket = io('http://localhost:3000'); // Adjust if backend URL changes
+// const socket = io('http://192.168.155.234:3000');
 
 const Messages = () => {
   const { user } = useAuthStore();
