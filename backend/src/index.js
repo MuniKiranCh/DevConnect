@@ -13,8 +13,19 @@ const io = socketIo(server, {
     }
 });
 
+const allowedOrigins = [
+  'https://dev-connect-olive.vercel.app',
+  'http://localhost:5173'
+];
 app.use(cors({
-  origin: '*'
+  origin: function(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
 }));
 
 require('dotenv').config();
