@@ -55,240 +55,26 @@ const Calls = () => {
   const remoteStreamRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const ringtoneRef = useRef(null);
-  const audioContextRef = useRef(null);
-  const oscillatorRef = useRef(null);
-  const gainNodeRef = useRef(null);
-  const isRingingRef = useRef(false);
-  const ringtoneIntervalRef = useRef(null);
 
   // Filter connections to only show accepted ones
   const acceptedConnections = connections.filter(conn => conn.status === 'accepted' || !conn.status);
 
   // Ringtone functions
   const playRingtone = () => {
-    try {
-      // Check if audio is enabled
-      if (!audioEnabled) {
-        console.log('Audio not enabled, skipping ringtone');
-        return;
-      }
-
-      // Set ringing state
-      isRingingRef.current = true;
-
-      // Create audio context if it doesn't exist
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
-      }
-
-      // Resume audio context if suspended
-      if (audioContextRef.current.state === 'suspended') {
-        audioContextRef.current.resume();
-      }
-
-      // Stop any existing ringtone
-      stopRingtone();
-
-      // Play the first ring immediately
-      playSingleRing();
-
-      // Set up interval to repeat ringtone every 2.5 seconds
-      ringtoneIntervalRef.current = setInterval(() => {
-        if (isRingingRef.current) {
-          playSingleRing();
-        }
-      }, 2500);
-
-      console.log('Ringtone started');
-    } catch (error) {
-      console.error('Failed to play ringtone:', error);
-      // Fallback to simple beep
-      playFallbackRingtone();
-    }
-  };
-
-  const playSingleRing = () => {
-    try {
-      if (!audioContextRef.current || !isRingingRef.current) return;
-
-      // Resume audio context if suspended
-      if (audioContextRef.current.state === 'suspended') {
-        audioContextRef.current.resume();
-      }
-
-      // Create new oscillator for this ring
-      const oscillator = audioContextRef.current.createOscillator();
-      const gainNode = audioContextRef.current.createGain();
-
-      // Configure ringtone sound (alternating frequencies)
-      const startTime = audioContextRef.current.currentTime;
-      oscillator.frequency.setValueAtTime(800, startTime);
-      oscillator.frequency.setValueAtTime(600, startTime + 0.5);
-      oscillator.frequency.setValueAtTime(800, startTime + 1.0);
-      oscillator.frequency.setValueAtTime(600, startTime + 1.5);
-
-      // Configure volume (fade in/out for each ring)
-      gainNode.gain.setValueAtTime(0, startTime);
-      gainNode.gain.linearRampToValueAtTime(0.3, startTime + 0.1);
-      gainNode.gain.setValueAtTime(0.3, startTime + 1.9);
-      gainNode.gain.linearRampToValueAtTime(0, startTime + 2.0);
-
-      // Connect and start
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContextRef.current.destination);
-      oscillator.start();
-      oscillator.stop(startTime + 2.0);
-
-      console.log('Ring played');
-    } catch (error) {
-      console.error('Failed to play single ring:', error);
-      // Fallback to simple beep
-      playFallbackBeep();
-    }
-  };
-
-  const playFallbackRingtone = () => {
-    try {
-      console.log('Playing fallback ringtone...');
-      
-      // Create a simple audio element as fallback
-      const audio = new Audio();
-      audio.src = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT';
-      audio.volume = 0.3;
-      
-      // Play first beep immediately
-      audio.play().then(() => {
-        console.log('Fallback ringtone started');
-        
-        // Set up interval to repeat every 2 seconds
-        ringtoneIntervalRef.current = setInterval(() => {
-          if (isRingingRef.current) {
-            audio.currentTime = 0;
-            audio.play().catch(e => {
-              console.error('Fallback audio repeat failed:', e);
-            });
-          }
-        }, 2000);
-      }).catch(e => {
-        console.error('Fallback audio failed:', e);
-        // Last resort - use system beep
-        playSystemBeep();
+    const audio = ringtoneRef.current;
+    if (audio) {
+      audio.currentTime = 0;
+      audio.play().catch((err) => {
+        console.error('Ringtone play failed:', err);
       });
-    } catch (error) {
-      console.error('Fallback ringtone failed:', error);
-      playSystemBeep();
-    }
-  };
-
-  const playFallbackBeep = () => {
-    try {
-      console.log('Playing fallback beep...');
-      
-      // Simple beep using AudioContext
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-      
-      oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-      
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      oscillator.start();
-      oscillator.stop(audioContext.currentTime + 0.5);
-      
-      // Set up interval to repeat every 2 seconds
-      ringtoneIntervalRef.current = setInterval(() => {
-        if (isRingingRef.current) {
-          const newOscillator = audioContext.createOscillator();
-          const newGainNode = audioContext.createGain();
-          
-          newOscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-          newGainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-          
-          newOscillator.connect(newGainNode);
-          newGainNode.connect(audioContext.destination);
-          newOscillator.start();
-          newOscillator.stop(audioContext.currentTime + 0.5);
-        }
-      }, 2000);
-      
-      console.log('Fallback beep started');
-    } catch (error) {
-      console.error('Fallback beep failed:', error);
-      playSystemBeep();
-    }
-  };
-
-  const playSystemBeep = () => {
-    try {
-      // Try to play a system beep using HTML5 audio
-      const audio = new Audio();
-      audio.src = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT';
-      audio.volume = 0.3;
-      audio.play();
-    } catch (error) {
-      console.error('System beep failed:', error);
-    }
-  };
-
-  const enableAudio = async () => {
-    try {
-      // Create audio context to enable audio
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      
-      // Resume audio context
-      if (audioContextRef.current.state === 'suspended') {
-        await audioContextRef.current.resume();
-      }
-      
-      // Play a test sound to enable audio
-      const oscillator = audioContextRef.current.createOscillator();
-      const gainNode = audioContextRef.current.createGain();
-      
-      oscillator.frequency.setValueAtTime(800, audioContextRef.current.currentTime);
-      gainNode.gain.setValueAtTime(0.1, audioContextRef.current.currentTime);
-      
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContextRef.current.destination);
-      oscillator.start();
-      oscillator.stop(audioContextRef.current.currentTime + 0.1);
-      
-      setAudioEnabled(true);
-      toast.success('Audio enabled!');
-      console.log('Audio enabled successfully');
-    } catch (error) {
-      console.error('Failed to enable audio:', error);
-      toast.error('Failed to enable audio');
     }
   };
 
   const stopRingtone = () => {
-    try {
-      // Clear the interval
-      if (ringtoneIntervalRef.current) {
-        clearInterval(ringtoneIntervalRef.current);
-        ringtoneIntervalRef.current = null;
-      }
-
-      // Stop any active oscillators
-      if (oscillatorRef.current) {
-        oscillatorRef.current.stop();
-        oscillatorRef.current = null;
-      }
-      if (gainNodeRef.current) {
-        gainNodeRef.current.disconnect();
-        gainNodeRef.current = null;
-      }
-
-      // Reset ringing state
-      isRingingRef.current = false;
-
-      console.log('Ringtone stopped');
-    } catch (error) {
-      console.error('Failed to stop ringtone:', error);
+    const audio = ringtoneRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
     }
   };
 
@@ -374,7 +160,7 @@ const Calls = () => {
       // Stop ringtone
       stopRingtone();
       
-      toast.info('Call was declined');
+      toast('Call declined');
       endCallCleanup();
     });
 
@@ -389,7 +175,7 @@ const Calls = () => {
       // Stop ringtone
       stopRingtone();
       
-      toast.info('Call ended');
+      toast('Call ended');
       endCallCleanup();
     });
 
@@ -517,11 +303,6 @@ const Calls = () => {
   useEffect(() => {
     return () => {
       stopRingtone();
-      // Clear interval if it exists
-      if (ringtoneIntervalRef.current) {
-        clearInterval(ringtoneIntervalRef.current);
-        ringtoneIntervalRef.current = null;
-      }
     };
   }, []);
 
@@ -605,9 +386,8 @@ const Calls = () => {
     // Check both the state and actual socket connection
     const socket = socketService.getSocket();
     console.log('Socket status:', {
-      socketConnected,
-      socketExists: !!socket,
       socketConnected: socket?.connected,
+      socketExists: !!socket,
       socketId: socket?.id
     });
     
@@ -799,7 +579,7 @@ const Calls = () => {
     socketService.declineCall(incomingCall.callerId, incomingCall.callType);
     
     setIncomingCall(null);
-    toast.info('Call declined');
+    toast('Call declined');
   };
 
   // End call
@@ -820,7 +600,7 @@ const Calls = () => {
     setInCall(false);
     setCallStatus('ended');
     endCallCleanup();
-    toast.info('Call ended');
+    toast('Call ended');
   };
 
   // Cleanup function
@@ -1055,7 +835,7 @@ const Calls = () => {
         {!audioEnabled && (
           <Button 
             variant="outline" 
-            onClick={enableAudio}
+            onClick={() => setAudioEnabled(true)}
             className="bg-purple-100 text-purple-800 hover:bg-purple-200"
           >
             🔊 Enable Audio
@@ -1222,7 +1002,14 @@ const Calls = () => {
               playsInline
               className="w-full h-full object-cover"
             />
-            
+            {/* Audio element for audio-only calls */}
+            {callType === 'audio' && (
+              <audio
+                ref={remoteVideoRef}
+                autoPlay
+                style={{ display: 'none' }}
+              />
+            )}
             {/* Local Video (Small - PiP) */}
             {callType === 'video' && (
               <div className="absolute top-4 right-4 w-48 h-36 bg-black rounded-lg border-2 border-white shadow-lg overflow-hidden">
@@ -1241,6 +1028,9 @@ const Calls = () => {
           </div>
         </div>
       )}
+
+      {/* Ringtone audio element (hidden) */}
+      <audio ref={ringtoneRef} src="/ringtone.mp3" loop style={{ display: 'none' }} />
     </div>
   );
 };
