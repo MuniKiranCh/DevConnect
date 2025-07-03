@@ -8,7 +8,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
     cors: {
-        origin: "https://dev-connect-theta.vercel.app", // In production, set to your frontend URL
+        origin: "https://dev-connect-theta.vercel.app",
         methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
     }
 });
