@@ -36,7 +36,7 @@ class SocketService {
       console.error('Failed to extract user ID from token:', error);
     }
 
-    this.socket = io('https://dev-connect-theta.vercel.app', {
+    this.socket = io('https://devconnect-6yeo.onrender.com', {
       auth: {
         token,
       },
