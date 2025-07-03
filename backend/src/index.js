@@ -8,12 +8,13 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
     cors: {
-        origin: "https://dev-connect-theta.vercel.app",
+        origin: "https://dev-connect-iota-tan.vercel.app",
         methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
     }
 });
 
 const allowedOrigins = [
+  'https://dev-connect-iota-tan.vercel.app',
   'https://dev-connect-theta.vercel.app',
   'https://dev-connect-olive.vercel.app',
   'http://localhost:5173'
