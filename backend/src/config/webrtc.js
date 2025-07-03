@@ -8,7 +8,11 @@ const webrtcConfig = {
                 'stun:stun1.l.google.com:19302',
                 'stun:stun2.l.google.com:19302',
                 'stun:stun3.l.google.com:19302',
-                'stun:stun4.l.google.com:19302'
+                'stun:stun4.l.google.com:19302',
+                'stun:stun.ekiga.net',
+                'stun:stun.ideasip.com',
+                'stun:stun.rixtelecom.se',
+                'stun:stun.schlund.de'
             ]
         },
         // TURN servers (for NAT traversal when STUN fails)
@@ -21,23 +25,42 @@ const webrtcConfig = {
             ],
             username: 'openrelayproject',
             credential: 'openrelayproject'
+        },
+        // Additional TURN servers for redundancy
+        {
+            urls: [
+                'turn:global.turn.twilio.com:3478?transport=udp',
+                'turn:global.turn.twilio.com:3478?transport=tcp',
+                'turn:global.turn.twilio.com:443?transport=tcp'
+            ],
+            username: 'your_twilio_username', // Replace with your Twilio credentials
+            credential: 'your_twilio_password'
         }
     ],
     
     // ICE candidate configuration
     iceCandidatePoolSize: 10,
     
+    // Bundle policy for better performance
+    bundlePolicy: 'max-bundle',
+    
+    // RTCP mux policy
+    rtcpMuxPolicy: 'require',
+    
     // Media constraints for video calls
     mediaConstraints: {
         audio: {
             echoCancellation: true,
             noiseSuppression: true,
-            autoGainControl: true
+            autoGainControl: true,
+            sampleRate: 48000,
+            channelCount: 2
         },
         video: {
             width: { ideal: 1280, max: 1920 },
             height: { ideal: 720, max: 1080 },
-            frameRate: { ideal: 30, max: 60 }
+            frameRate: { ideal: 30, max: 60 },
+            aspectRatio: { ideal: 16/9 }
         }
     },
     

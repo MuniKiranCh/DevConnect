@@ -20,13 +20,23 @@ import { useConnectionsStore } from '../utils/store';
 import socketService from '../utils/socket';
 import { callAPI } from '../utils/api';
 import { toast } from 'react-hot-toast';
+import { testMediaDevices, testWebRTCConnection, handleMediaStreamError } from '../utils/videoTest';
 
 const STUN_SERVER = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' }
-  ]
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:stun.ekiga.net' },
+    { urls: 'stun:stun.ideasip.com' },
+    { urls: 'stun:stun.rixtelecom.se' },
+    { urls: 'stun:stun.schlund.de' }
+  ],
+  iceCandidatePoolSize: 10,
+  bundlePolicy: 'max-bundle',
+  rtcpMuxPolicy: 'require'
 };
 
 const Calls = () => {
@@ -46,7 +56,7 @@ const Calls = () => {
   const [callStatus, setCallStatus] = useState('');
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
-  const [audioEnabled, setAudioEnabled] = useState(false);
+  const [audioEnabled, setAudioEnabled] = useState(true); // Default to true for voice calls
 
   // Refs
   const localVideoRef = useRef(null);
@@ -55,87 +65,84 @@ const Calls = () => {
   const remoteStreamRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const ringtoneRef = useRef(null);
-
-  // Filter connections to only show accepted ones
-  const acceptedConnections = connections.filter(conn => conn.status === 'accepted' || !conn.status);
-
-  // New state
-  const [activeCallUserId, setActiveCallUserId] = useState(null);
-  const [activeCallId, setActiveCallId] = useState(null);
+  const callTimerRef = useRef(null);
   const [callStartTime, setCallStartTime] = useState(null);
   const [callDuration, setCallDuration] = useState(0);
-  const callTimerRef = useRef(null);
+  const [activeCallUserId, setActiveCallUserId] = useState(null);
+  const [activeCallId, setActiveCallId] = useState(null);
+
+  // Get accepted connections
+  const acceptedConnections = connections.filter(conn => conn.status === 'accepted');
 
   // Ringtone functions
   const playRingtone = () => {
-    const audio = ringtoneRef.current;
-    if (audio) {
-      audio.currentTime = 0;
-      audio.play().catch((err) => {
-        console.error('Ringtone play failed:', err);
-      });
+    if (ringtoneRef.current) {
+      ringtoneRef.current.play().catch(e => console.log('Ringtone play failed:', e));
     }
   };
 
   const stopRingtone = () => {
-    const audio = ringtoneRef.current;
-    if (audio) {
-      audio.pause();
-      audio.currentTime = 0;
+    if (ringtoneRef.current) {
+      ringtoneRef.current.pause();
+      ringtoneRef.current.currentTime = 0;
     }
   };
 
-  // Monitor socket connection status
+  // Socket connection management
   useEffect(() => {
     const socket = socketService.getSocket();
-    if (!socket) return;
-
+    
     const handleConnect = () => {
+      console.log('Socket connected');
       setSocketConnected(true);
-      console.log('Socket connected in Calls page');
-    };
-    
-    const handleDisconnect = () => {
-      setSocketConnected(false);
-      console.log('Socket disconnected in Calls page');
+      if (user?._id) {
+        socket.emit('join', user._id);
+      }
     };
 
-    socket.on('connect', handleConnect);
-    socket.on('disconnect', handleDisconnect);
-    
-    // Set initial status
-    setSocketConnected(socket.connected);
+    const handleDisconnect = () => {
+      console.log('Socket disconnected');
+      setSocketConnected(false);
+    };
+
+    if (socket) {
+      socket.on('connect', handleConnect);
+      socket.on('disconnect', handleDisconnect);
+      setSocketConnected(socket.connected);
+      
+      if (socket.connected && user?._id) {
+        socket.emit('join', user._id);
+      }
+    }
 
     return () => {
-      socket.off('connect', handleConnect);
-      socket.off('disconnect', handleDisconnect);
+      if (socket) {
+        socket.off('connect', handleConnect);
+        socket.off('disconnect', handleDisconnect);
+      }
     };
-  }, []);
+  }, [user?._id]);
 
-  // Socket event listeners for calls
+  // Incoming call handlers
   useEffect(() => {
     const socket = socketService.getSocket();
     if (!socket) return;
 
     // Incoming call handler
     socket.on('incoming_call', (data) => {
-      console.log('=== INCOMING CALL RECEIVED ===');
-      console.log('Call data:', data);
+      console.log('=== INCOMING CALL ===', data);
       const { callerId, callType, callId } = data;
-      // Find caller info
-      const caller = acceptedConnections.find(c => c._id === callerId);
-      if (!caller) {
-        console.error('Caller not found in connections');
-        return;
-      }
+      
+      // Find caller details from connections
+      const caller = acceptedConnections.find(conn => conn._id === callerId);
+      
       setIncomingCall({
         callerId,
         callType,
         callId,
-        callerName: `${caller.firstName} ${caller.lastName}`,
-        callerPhoto: caller.photoUrl
+        callerName: caller ? `${caller.firstName} ${caller.lastName}` : 'Unknown',
+        callerPhoto: caller?.photoUrl
       });
-      setCallType(callType);
       setIsRinging(true);
       playRingtone();
     });
@@ -143,15 +150,9 @@ const Calls = () => {
     // Call accepted handler
     socket.on('call_accepted', (data) => {
       console.log('Call accepted:', data);
-      setIsRinging(false);
-      setIncomingCall(null);
-      setInCall(true);
-      setCallStatus('in-call');
-      
-      // Stop ringtone
-      stopRingtone();
-      
+      setCallStatus('connected');
       toast.success('Call connected!');
+      startCallTimer();
     });
 
     // Call declined handler
@@ -161,8 +162,7 @@ const Calls = () => {
       setIncomingCall(null);
       setInCall(false);
       setCallStatus('declined');
-      stopRingtone();
-      toast('Call was declined');
+      toast.error('Call was declined');
       endCallCleanup();
     });
 
@@ -173,7 +173,7 @@ const Calls = () => {
       setIncomingCall(null);
       setInCall(false);
       setCallStatus('ended');
-      stopRingtone();
+      toast.info('Call ended');
       endCallCleanup();
     });
 
@@ -197,7 +197,7 @@ const Calls = () => {
     };
   }, [acceptedConnections]);
 
-  // WebRTC signaling handlers
+  // WebRTC signaling handlers with improved error handling
   useEffect(() => {
     const socket = socketService.getSocket();
     if (!socket) return;
@@ -211,40 +211,83 @@ const Calls = () => {
       console.log('Offer:', offer);
 
       try {
-        // Get local media stream
-        const localStream = await navigator.mediaDevices.getUserMedia({ 
-          video: callType === 'video', 
-          audio: true 
+        // Get local media stream with better constraints
+        const mediaConstraints = {
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 48000
+          },
+          video: callType === 'video' ? {
+            width: { ideal: 1280, max: 1920 },
+            height: { ideal: 720, max: 1080 },
+            frameRate: { ideal: 30, max: 60 }
+          } : false
+        };
+
+        const localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints).catch(error => {
+          const userMessage = handleMediaStreamError(error, 'during WebRTC offer handling');
+          throw new Error(userMessage);
         });
         localStreamRef.current = localStream;
         
-        if (localVideoRef.current) {
+        // Set local video
+        if (localVideoRef.current && callType === 'video') {
           localVideoRef.current.srcObject = localStream;
+          localVideoRef.current.play().catch(e => console.log('Local video play failed:', e));
         }
 
-        // Create peer connection
-        const peerConnection = new RTCPeerConnection(STUN_SERVER);
+        // Create peer connection with better configuration
+        const peerConnection = new RTCPeerConnection({
+          ...STUN_SERVER,
+          iceCandidatePoolSize: 10
+        });
         peerConnectionRef.current = peerConnection;
 
         // Add local stream tracks
         localStream.getTracks().forEach(track => {
+          console.log('Adding track to peer connection:', track.kind);
           peerConnection.addTrack(track, localStream);
         });
 
-        // Handle remote stream
+        // Handle remote stream with better error handling
         peerConnection.ontrack = (event) => {
-          console.log('Received remote stream');
+          console.log('Received remote stream:', event.streams[0]);
           remoteStreamRef.current = event.streams[0];
           if (remoteVideoRef.current) {
             remoteVideoRef.current.srcObject = event.streams[0];
+            remoteVideoRef.current.play().catch(e => console.log('Remote video play failed:', e));
           }
         };
 
         // Handle ICE candidates
         peerConnection.onicecandidate = (event) => {
           if (event.candidate) {
+            console.log('Sending ICE candidate');
             socketService.sendIceCandidate(callerId, event.candidate, callType);
           }
+        };
+
+        // Handle connection state changes
+        peerConnection.onconnectionstatechange = () => {
+          console.log('Connection state changed:', peerConnection.connectionState);
+          if (peerConnection.connectionState === 'connected') {
+            setCallStatus('connected');
+            toast.success('Call connected!');
+            startCallTimer();
+          } else if (peerConnection.connectionState === 'failed') {
+            toast.error('Call connection failed');
+            endCallCleanup();
+          } else if (peerConnection.connectionState === 'disconnected') {
+            toast.error('Call disconnected');
+            endCallCleanup();
+          }
+        };
+
+        // Handle ICE connection state changes
+        peerConnection.oniceconnectionstatechange = () => {
+          console.log('ICE connection state:', peerConnection.iceConnectionState);
         };
 
         // Set remote description and create answer
@@ -257,7 +300,8 @@ const Calls = () => {
 
       } catch (error) {
         console.error('Error handling WebRTC offer:', error);
-        toast.error('Failed to establish connection');
+        toast.error('Failed to establish connection: ' + error.message);
+        endCallCleanup();
       }
     });
 
@@ -301,10 +345,12 @@ const Calls = () => {
     fetchCallHistory();
   }, []);
 
-  // Cleanup ringtone on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
+      console.log('Calls component unmounting, cleaning up...');
       stopRingtone();
+      endCallCleanup();
     };
   }, []);
 
@@ -352,6 +398,32 @@ const Calls = () => {
       toast.success('Call initiation test sent');
     } else {
       toast.error('Socket not connected for test');
+    }
+  };
+
+  // Debug function to test media devices
+  const testMediaDevicesDebug = async () => {
+    console.log('=== TESTING MEDIA DEVICES ===');
+    const results = await testMediaDevices();
+    console.log('Media devices test results:', results);
+    
+    if (results.audio && results.video) {
+      toast.success('Media devices working correctly');
+    } else {
+      toast.error('Media devices test failed - check console for details');
+    }
+  };
+
+  // Debug function to test WebRTC
+  const testWebRTCDebug = async () => {
+    console.log('=== TESTING WEBRTC ===');
+    const results = await testWebRTCConnection();
+    console.log('WebRTC test results:', results);
+    
+    if (results.rtcPeerConnection && results.iceServers) {
+      toast.success('WebRTC working correctly');
+    } else {
+      toast.error('WebRTC test failed - check console for details');
     }
   };
 
@@ -410,48 +482,86 @@ const Calls = () => {
     console.log('=== INITIATING CALL ===');
     console.log('Receiver ID:', receiverId);
     console.log('Call type:', type);
+    
     // Check both the state and actual socket connection
     const socket = socketService.getSocket();
     if (!socketConnected || !socket || !socket.connected) {
       toast.error('You are not connected. Please check your internet connection.');
       return;
     }
+    
     setCallType(type);
     setCallStatus('calling');
     setInCall(true);
+    
     try {
       // 1. Create call in backend and get callId
       const response = await callAPI.initiateCall(receiverId, type);
       const call = response.data.data;
       const callId = call.callId;
       setActiveCallId(callId);
-      // 2. Get local media stream
-      const localStream = await navigator.mediaDevices.getUserMedia({ 
-        video: type === 'video', 
-        audio: true 
+      
+      // 2. Get local media stream with better constraints
+      const mediaConstraints = {
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48000
+        },
+        video: type === 'video' ? {
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 720, max: 1080 },
+          frameRate: { ideal: 30, max: 60 }
+        } : false
+      };
+
+      const localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints).catch(error => {
+        const userMessage = handleMediaStreamError(error, 'during call initiation');
+        throw new Error(userMessage);
       });
       localStreamRef.current = localStream;
-      if (localVideoRef.current) {
+      
+      // Set local video
+      if (localVideoRef.current && type === 'video') {
         localVideoRef.current.srcObject = localStream;
+        localVideoRef.current.play().catch(e => console.log('Local video play failed:', e));
       }
-      // 3. Create peer connection
-      const peerConnection = new RTCPeerConnection(STUN_SERVER);
+      
+      // 3. Create peer connection with better configuration
+      const peerConnection = new RTCPeerConnection({
+        ...STUN_SERVER,
+        iceCandidatePoolSize: 10
+      });
       peerConnectionRef.current = peerConnection;
+      
+      // Add local stream tracks
       localStream.getTracks().forEach(track => {
+        console.log('Adding track to peer connection:', track.kind);
         peerConnection.addTrack(track, localStream);
       });
+      
+      // Handle remote stream
       peerConnection.ontrack = (event) => {
+        console.log('Received remote stream:', event.streams[0]);
         remoteStreamRef.current = event.streams[0];
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = event.streams[0];
+          remoteVideoRef.current.play().catch(e => console.log('Remote video play failed:', e));
         }
       };
+      
+      // Handle ICE candidates
       peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
+          console.log('Sending ICE candidate');
           socketService.sendIceCandidate(receiverId, event.candidate, type);
         }
       };
+      
+      // Handle connection state changes
       peerConnection.onconnectionstatechange = () => {
+        console.log('Connection state changed:', peerConnection.connectionState);
         if (peerConnection.connectionState === 'connected') {
           setCallStatus('connected');
           toast.success('Call connected!');
@@ -459,10 +569,20 @@ const Calls = () => {
         } else if (peerConnection.connectionState === 'failed') {
           toast.error('Call connection failed');
           endCallCleanup();
+        } else if (peerConnection.connectionState === 'disconnected') {
+          toast.error('Call disconnected');
+          endCallCleanup();
         }
       };
+      
+      // Handle ICE connection state changes
+      peerConnection.oniceconnectionstatechange = () => {
+        console.log('ICE connection state:', peerConnection.iceConnectionState);
+      };
+      
       // 4. Notify receiver via socket (now with callId)
       socket.emit('initiate_call', { receiverId, callType: type, callId });
+      
       // 5. Wait a bit for the call initiation to be processed
       setTimeout(async () => {
         try {
@@ -476,11 +596,13 @@ const Calls = () => {
             return;
           }
         } catch (error) {
+          console.error('Failed to create call offer:', error);
           toast.error('Failed to create call offer');
           endCallCleanup();
         }
       }, 1000);
     } catch (error) {
+      console.error('Failed to start call:', error);
       toast.error('Failed to start call: ' + error.message);
       endCallCleanup();
     }
@@ -489,41 +611,76 @@ const Calls = () => {
   // Accept incoming call
   const acceptIncomingCall = async () => {
     if (!incomingCall) return;
+    
     setActiveCallUserId(incomingCall.callerId);
     setActiveCallId(incomingCall.callId);
     setIsRinging(false);
-    if (ringtoneRef.current) {
-      ringtoneRef.current.pause();
-      ringtoneRef.current.currentTime = 0;
-    }
+    stopRingtone();
+    
     try {
       await callAPI.acceptCall(incomingCall.callId);
-      // Get local media stream
-      const localStream = await navigator.mediaDevices.getUserMedia({ 
-        video: incomingCall.callType === 'video', 
-        audio: true 
+      
+      // Get local media stream with better constraints
+      const mediaConstraints = {
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48000
+        },
+        video: incomingCall.callType === 'video' ? {
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 720, max: 1080 },
+          frameRate: { ideal: 30, max: 60 }
+        } : false
+      };
+
+      const localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints).catch(error => {
+        const userMessage = handleMediaStreamError(error, 'during call acceptance');
+        throw new Error(userMessage);
       });
       localStreamRef.current = localStream;
-      if (localVideoRef.current) {
+      
+      // Set local video
+      if (localVideoRef.current && incomingCall.callType === 'video') {
         localVideoRef.current.srcObject = localStream;
+        localVideoRef.current.play().catch(e => console.log('Local video play failed:', e));
       }
-      const peerConnection = new RTCPeerConnection(STUN_SERVER);
+      
+      // Create peer connection with better configuration
+      const peerConnection = new RTCPeerConnection({
+        ...STUN_SERVER,
+        iceCandidatePoolSize: 10
+      });
       peerConnectionRef.current = peerConnection;
+      
+      // Add local stream tracks
       localStream.getTracks().forEach(track => {
+        console.log('Adding track to peer connection:', track.kind);
         peerConnection.addTrack(track, localStream);
       });
+      
+      // Handle remote stream
       peerConnection.ontrack = (event) => {
+        console.log('Received remote stream:', event.streams[0]);
         remoteStreamRef.current = event.streams[0];
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = event.streams[0];
+          remoteVideoRef.current.play().catch(e => console.log('Remote video play failed:', e));
         }
       };
+      
+      // Handle ICE candidates
       peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
+          console.log('Sending ICE candidate');
           socketService.sendIceCandidate(incomingCall.callerId, event.candidate, incomingCall.callType);
         }
       };
+      
+      // Handle connection state changes
       peerConnection.onconnectionstatechange = () => {
+        console.log('Connection state changed:', peerConnection.connectionState);
         if (peerConnection.connectionState === 'connected') {
           setCallStatus('connected');
           toast.success('Call connected!');
@@ -531,8 +688,17 @@ const Calls = () => {
         } else if (peerConnection.connectionState === 'failed') {
           toast.error('Call connection failed');
           endCallCleanup();
+        } else if (peerConnection.connectionState === 'disconnected') {
+          toast.error('Call disconnected');
+          endCallCleanup();
         }
       };
+      
+      // Handle ICE connection state changes
+      peerConnection.oniceconnectionstatechange = () => {
+        console.log('ICE connection state:', peerConnection.iceConnectionState);
+      };
+      
       socketService.acceptCall(incomingCall.callerId, incomingCall.callType, incomingCall.callId);
       setIncomingCall(null);
       setInCall(true);
@@ -540,6 +706,7 @@ const Calls = () => {
       setCallStatus('in-call');
       toast.success('Call accepted!');
     } catch (error) {
+      console.error('Failed to accept call:', error);
       toast.error('Failed to accept call: ' + (error?.response?.data?.message || error.message));
       setIncomingCall(null);
       setIsRinging(false);
@@ -600,21 +767,53 @@ const Calls = () => {
 
   // Cleanup function
   const endCallCleanup = () => {
+    console.log('Cleaning up call resources...');
     stopRingtone();
+    
+    // Clear call timer
+    if (callTimerRef.current) {
+      clearInterval(callTimerRef.current);
+      callTimerRef.current = null;
+    }
+    
+    // Close peer connection
     if (peerConnectionRef.current) {
+      console.log('Closing peer connection...');
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
     }
+    
+    // Stop local stream tracks
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
+      console.log('Stopping local stream tracks...');
+      localStreamRef.current.getTracks().forEach(track => {
+        console.log('Stopping track:', track.kind);
+        track.stop();
+      });
       localStreamRef.current = null;
     }
+    
+    // Clear remote stream
     remoteStreamRef.current = null;
+    
+    // Clear video elements
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = null;
+    }
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null;
+    }
+    
+    // Reset states
     setCallStatus('');
     setIsMuted(false);
     setIsVideoOff(false);
     setActiveCallUserId(null);
     setActiveCallId(null);
+    setCallDuration(0);
+    setCallStartTime(null);
+    
+    console.log('Call cleanup completed');
   };
 
   // Toggle mute
@@ -828,6 +1027,27 @@ const Calls = () => {
             <span className="text-sm">🔊 Audio Enabled</span>
           </div>
         )}
+        <Button 
+          variant="outline" 
+          onClick={testSocketConnection}
+          className="bg-blue-100 text-blue-800 hover:bg-blue-200"
+        >
+          Test Socket
+        </Button>
+        <Button 
+          variant="outline" 
+          onClick={testMediaDevicesDebug}
+          className="bg-green-100 text-green-800 hover:bg-green-200"
+        >
+          Test Media
+        </Button>
+        <Button 
+          variant="outline" 
+          onClick={testWebRTCDebug}
+          className="bg-orange-100 text-orange-800 hover:bg-orange-200"
+        >
+          Test WebRTC
+        </Button>
       </div>
 
       {/* Tabs */}
@@ -982,16 +1202,24 @@ const Calls = () => {
               ref={remoteVideoRef}
               autoPlay
               playsInline
+              muted={false}
               className="w-full h-full object-cover"
+              onLoadedMetadata={() => console.log('Remote video loaded')}
+              onError={(e) => console.error('Remote video error:', e)}
             />
+            
             {/* Audio element for audio-only calls */}
             {callType === 'audio' && (
               <audio
                 ref={remoteVideoRef}
                 autoPlay
+                muted={false}
                 style={{ display: 'none' }}
+                onLoadedMetadata={() => console.log('Remote audio loaded')}
+                onError={(e) => console.error('Remote audio error:', e)}
               />
             )}
+            
             {/* Local Video (Small - PiP) */}
             {callType === 'video' && (
               <div className="absolute top-4 right-4 w-48 h-36 bg-black rounded-lg border-2 border-white shadow-lg overflow-hidden">
@@ -1001,9 +1229,23 @@ const Calls = () => {
                   playsInline 
                   muted 
                   className="w-full h-full object-cover"
+                  onLoadedMetadata={() => console.log('Local video loaded')}
+                  onError={(e) => console.error('Local video error:', e)}
                 />
               </div>
             )}
+            
+            {/* Call status overlay */}
+            <div className="absolute top-4 left-4 bg-black bg-opacity-50 text-white px-3 py-1 rounded-md">
+              <span className="text-sm">
+                {callStatus === 'connected' ? 'Connected' : 
+                 callStatus === 'calling' ? 'Calling...' : 
+                 callStatus === 'in-call' ? 'In Call' : callStatus}
+              </span>
+              {callDuration > 0 && (
+                <span className="ml-2 text-sm">{formatDuration(callDuration)}</span>
+              )}
+            </div>
             
             {/* Call Controls */}
             <CallControls />
